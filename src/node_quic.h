@@ -10,15 +10,6 @@
 namespace node {
 namespace quic {
 
-class Quic {
- public:
-  Quic();
-  ~Quic();
-  static void ProtocolVersion(const v8::FunctionCallbackInfo<v8::Value>& args);
-  static void ALPNVersion(const v8::FunctionCallbackInfo<v8::Value>& args);
-
- private:
-};
 
 }  // namespace quic
 }  // namespace node
