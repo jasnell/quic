@@ -14,17 +14,16 @@ using v8::Value;
 
 namespace quic {
 
-Quic::Quic() {}
-Quic::~Quic() {}
-
-void Quic::ProtocolVersion(const FunctionCallbackInfo<Value>& args) {
+namespace {
+void QuicProtocolVersion(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(NGTCP2_PROTO_VER_D17);
 }
 
-void Quic::ALPNVersion(const FunctionCallbackInfo<Value>& args) {
+void QuicALPNVersion(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   args.GetReturnValue().Set(OneByteString(env->isolate(), NGTCP2_ALPN_D17));
 }
+}  // namespace
 
 void Initialize(Local<Object> target,
                 Local<Value> unused,
@@ -34,8 +33,8 @@ void Initialize(Local<Object> target,
   Isolate* isolate = env->isolate();
   HandleScope scope(isolate);
 
-  env->SetMethod(target, "protocolVersion", Quic::ProtocolVersion);
-  env->SetMethod(target, "alpnVersion", Quic::ALPNVersion);
+  env->SetMethod(target, "protocolVersion", QuicProtocolVersion);
+  env->SetMethod(target, "alpnVersion", QuicALPNVersion);
 }
 
 }  // namespace quic
