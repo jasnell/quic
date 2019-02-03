@@ -370,6 +370,15 @@ constexpr size_t kFsStatsBufferLength = kFsStatsFieldsNumber * 2;
   V(primordials, v8::Object)                                                   \
   V(promise_reject_callback, v8::Function)                                     \
   V(promise_wrap_template, v8::ObjectTemplate)                                 \
+  V(quic_on_socket_ready_function, v8::Function)                               \
+  V(quic_on_socket_close_function, v8::Function)                               \
+  V(quic_on_socket_error_function, v8::Function)                               \
+  V(quic_on_session_ready_function, v8::Function)                              \
+  V(quic_on_session_close_function, v8::Function)                              \
+  V(quic_on_session_error_function, v8::Function)                              \
+  V(quic_on_stream_ready_function, v8::Function)                               \
+  V(quic_on_stream_close_function, v8::Function)                               \
+  V(quic_on_stream_error_function, v8::Function)                               \
   V(sab_lifetimepartner_constructor_template, v8::FunctionTemplate)            \
   V(script_context_constructor_template, v8::FunctionTemplate)                 \
   V(script_data_constructor_function, v8::Function)                            \
