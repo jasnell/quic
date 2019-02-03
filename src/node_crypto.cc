@@ -30,6 +30,7 @@
 #include "node_mutex.h"
 #include "node_process.h"
 #include "tls_wrap.h"  // TLSWrap
+#include "node_quic.h"  // QuicServerSession QuicClientSession
 
 #include "async_wrap-inl.h"
 #include "env-inl.h"
@@ -160,6 +161,35 @@ template int SSLWrap<TLSWrap>::SelectALPNCallback(
     unsigned int inlen,
     void* arg);
 
+template void SSLWrap<QuicServerSession>::AddMethods(
+    Environment* env,
+    Local<FunctionTemplate> t);
+template void SSLWrap<QuicServerSession>::ConfigureSecureContext(
+    SecureContext* sc);
+template void SSLWrap<QuicServerSession>::SetSNIContext(SecureContext* sc);
+template int SSLWrap<QuicServerSession>::SetCACerts(SecureContext* sc);
+template SSL_SESSION* SSLWrap<QuicServerSession>::GetSessionCallback(
+    SSL* s,
+    const unsigned char* key,
+    int len,
+    int* copy);
+template int SSLWrap<QuicServerSession>::NewSessionCallback(SSL* s,
+                                                            SSL_SESSION* sess);
+template void SSLWrap<QuicServerSession>::OnClientHello(
+    void* arg,
+    const ClientHelloParser::ClientHello& hello);
+template int SSLWrap<QuicServerSession>::TLSExtStatusCallback(
+   SSL* s, void* arg);
+template void SSLWrap<QuicServerSession>::DestroySSL();
+template int SSLWrap<QuicServerSession>::SSLCertCallback(SSL* s, void* arg);
+template void SSLWrap<QuicServerSession>::WaitForCertCb(CertCb cb, void* arg);
+template int SSLWrap<QuicServerSession>::SelectALPNCallback(
+    SSL* s,
+    const unsigned char** out,
+    unsigned char* outlen,
+    const unsigned char* in,
+    unsigned int inlen,
+    void* arg);
 
 static int PasswordCallback(char* buf, int size, int rwflag, void* u) {
   if (u) {
@@ -488,6 +518,17 @@ void SecureContext::Init(const FunctionCallbackInfo<Value>& args) {
     } else if (strcmp(*sslmethod, "TLSv1_2_client_method") == 0) {
       min_version = TLS1_2_VERSION;
       max_version = TLS1_2_VERSION;
+      method = TLS_client_method();
+    } else if (strcmp(*sslmethod, "TLSv1_3_method") == 0) {
+      min_version = TLS1_3_VERSION;
+      max_version = TLS1_3_VERSION;
+    } else if (strcmp(*sslmethod, "TLSv1_3_server_method") == 0) {
+      min_version = TLS1_3_VERSION;
+      max_version = TLS1_3_VERSION;
+      method = TLS_server_method();
+    } else if (strcmp(*sslmethod, "TLSv1_3_client_method") == 0) {
+      min_version = TLS1_3_VERSION;
+      max_version = TLS1_3_VERSION;
       method = TLS_client_method();
     } else {
       THROW_ERR_TLS_INVALID_PROTOCOL_METHOD(env, "Unknown method");
