@@ -80,7 +80,6 @@ void QuicALPNVersion(const FunctionCallbackInfo<Value>& args) {
 }
 
 void QuicSocketBind(const FunctionCallbackInfo<Value>& args) {
-  Environment* env = Environment::GetCurrent(args);
   CHECK(args[0]->IsObject());
   QuicSocket* socket;
   ASSIGN_OR_RETURN_UNWRAP(&socket, args[0].As<Object>());
@@ -88,7 +87,6 @@ void QuicSocketBind(const FunctionCallbackInfo<Value>& args) {
 }
 
 void QuicSocketClose(const FunctionCallbackInfo<Value>& args) {
-  Environment* env = Environment::GetCurrent(args);
   CHECK(args[0]->IsObject());
   QuicSocket* socket;
   ASSIGN_OR_RETURN_UNWRAP(&socket, args[0].As<Object>());
