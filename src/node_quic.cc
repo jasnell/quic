@@ -36,8 +36,7 @@ void QuicSocket::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsObject());
   Local<Object> options = args[0].As<Object>();
   QuicSocketConfig config(options);
-  QuicSocket* socket = new QuicSocket(env, args.This(), config, nullptr);
-  socket->get_async_id();  // avoid compiler warning
+  new QuicSocket(env, args.This(), config, nullptr);
 }
 
 namespace {
