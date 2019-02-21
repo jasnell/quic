@@ -8,8 +8,7 @@
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
 #include "node_crypto_bio.h"  // NodeBIO
-// ClientHelloParser
-#include "node_crypto_clienthello-inl.h"
+#include "node_crypto_clienthello-inl.h" // ClientHelloParser
 
 #include <limits.h>
 #include <stdarg.h>
@@ -133,27 +132,15 @@ QuicServerSession* QuicServerSession::New(QuicSocket* socket) {
   return new QuicServerSession(socket, obj);
 }
 
-// TODO(@jasnell): Determine what this does... :-)
-int QuicSession::recv_client_initial(
-    ngtcp2_conn *conn,
-    const ngtcp2_cid *dcid,
-    void *user_data) {
-
-  auto h = static_cast<QuicSession*>(user_data);
-
-  // if (h->recv_client_initial(dcid) != 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
-
+int QuicSession::ReceiveClientInitial(const ngtcp2_cid* dcid) {
+  // TODO(@jasnell): Implement this
   return 0;
 }
 
-int QuicSession::recv_crypto_data(
-    ngtcp2_conn *conn,
-    uint64_t offset,
-    const uint8_t *data,
-    size_t datalen,
-    void *user_data) {
+int QuicSession::ReceiveCryptoData(uint64_t offset,
+                                   const uint8_t* data,
+                                   size_t datalen) {
+  // TODO(@jasnell): Implement this
   // int rv;
 
   // if (!config.quiet) {
@@ -178,20 +165,9 @@ int QuicSession::recv_crypto_data(
   return 0;
 }
 
-int QuicSession::handshake_completed(ngtcp2_conn *conn, void *user_data) {
-  // auto h = static_cast<Handler *>(user_data);
+void QuicSession::HandshakeCompleted() {}
 
-  // if (!config.quiet) {
-  //   debug::handshake_completed(conn, user_data);
-  // }
-
-  // h->send_greeting();
-
-  // return 0;
-}
-
-ssize_t QuicSession::do_hs_encrypt(
-    ngtcp2_conn* conn,
+ssize_t QuicSession::DoHSEncrypt(
     uint8_t* dest,
     size_t destlen,
     const uint8_t* plaintext,
@@ -201,22 +177,16 @@ ssize_t QuicSession::do_hs_encrypt(
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
+    size_t adlen) {
   // auto nwrite = h->hs_encrypt_data(dest, destlen, plaintext, plaintextlen, key,
   //                                  keylen, nonce, noncelen, ad, adlen);
-  // if (nwrite < 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
 
   // return nwrite;
   return 0;
 }
 
-ssize_t QuicSession::do_hs_decrypt(
-    ngtcp2_conn* conn,
+
+ssize_t QuicSession::DoHSDecrypt(
     uint8_t* dest,
     size_t destlen,
     const uint8_t* ciphertext,
@@ -226,10 +196,7 @@ ssize_t QuicSession::do_hs_decrypt(
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
+    size_t adlen) {
   // auto nwrite = h->hs_decrypt_data(dest, destlen, ciphertext, ciphertextlen,
   //                                  key, keylen, nonce, noncelen, ad, adlen);
   // if (nwrite < 0) {
@@ -237,11 +204,11 @@ ssize_t QuicSession::do_hs_decrypt(
   // }
 
   // return nwrite;
+
   return 0;
 }
 
-ssize_t QuicSession::do_encrypt(
-    ngtcp2_conn* conn,
+ssize_t QuicSession::DoEncrypt(
     uint8_t* dest,
     size_t destlen,
     const uint8_t* plaintext,
@@ -251,22 +218,11 @@ ssize_t QuicSession::do_encrypt(
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
-  // auto nwrite = h->encrypt_data(dest, destlen, plaintext, plaintextlen, key,
-  //                               keylen, nonce, noncelen, ad, adlen);
-  // if (nwrite < 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
-
-  // return nwrite;
+    size_t adlen) {
   return 0;
 }
 
-ssize_t QuicSession::do_decrypt(
-    ngtcp2_conn* conn,
+ssize_t QuicSession::DoDecrypt(
     uint8_t* dest,
     size_t destlen,
     const uint8_t* ciphertext,
@@ -276,138 +232,64 @@ ssize_t QuicSession::do_decrypt(
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
-  // auto nwrite = h->decrypt_data(dest, destlen, ciphertext, ciphertextlen, key,
-  //                               keylen, nonce, noncelen, ad, adlen);
-  // if (nwrite < 0) {
-  //   return NGTCP2_ERR_TLS_DECRYPT;
-  // }
-
-  // return nwrite;
+    size_t adlen) {
   return 0;
 }
 
-ssize_t QuicSession::do_in_hp_mask(
-    ngtcp2_conn* conn,
+ssize_t QuicSession::DoInHPMask(
     uint8_t* dest,
     size_t destlen,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* sample,
-    size_t samplelen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
-  // auto nwrite = h->in_hp_mask(dest, destlen, key, keylen, sample, samplelen);
-  // if (nwrite < 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
-
-  // if (!config.quiet && config.show_secret) {
-  //   debug::print_hp_mask(dest, destlen, sample, samplelen);
-  // }
-
-  // return nwrite;
+    size_t samplelen) {
   return 0;
 }
 
-ssize_t QuicSession::do_hp_mask(
-    ngtcp2_conn* conn,
+ssize_t QuicSession::DoHPMask(
     uint8_t* dest,
     size_t destlen,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* sample,
-    size_t samplelen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
-  // auto nwrite = h->hp_mask(dest, destlen, key, keylen, sample, samplelen);
-  // if (nwrite < 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
-
-  // if (!config.quiet && config.show_secret) {
-  //   debug::print_hp_mask(dest, destlen, sample, samplelen);
-  // }
-
-  // return nwrite;
+    size_t samplelen) {
   return 0;
 }
 
-int QuicSession::recv_stream_data(
-    ngtcp2_conn* conn,
+int QuicSession::ReceiveStreamData(
     uint64_t stream_id,
     int fin,
     uint64_t offset,
     const uint8_t* data,
-    size_t datalen,
-    void* user_data,
-    void* stream_user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-
-  // if (h->recv_stream_data(stream_id, fin, data, datalen) != 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
-
+    size_t datalen) {
   return 0;
 }
 
-int QuicSession::acked_crypto_offset(
-    ngtcp2_conn* conn,
+void QuicSession::AckedCryptoOffset(
     uint64_t offset,
-    size_t datalen,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-  // h->remove_tx_crypto_data(offset, datalen);
-  return 0;
-}
+    size_t datalen) {}
 
-int QuicSession::acked_stream_data_offset(
-    ngtcp2_conn* conn,
+int QuicSession::AckedStreamDataOffset(
     uint64_t stream_id,
     uint64_t offset,
-    size_t datalen,
-    void* user_data,
-    void* stream_user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-  // if (h->remove_tx_stream_data(stream_id, offset, datalen) != 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
+    size_t datalen) {
   return 0;
 }
 
-int QuicSession::stream_close(
-    ngtcp2_conn* conn,
+void QuicSession::StreamClose(
     uint64_t stream_id,
-    uint16_t app_error_code,
-    void* user_data,
-    void* stream_user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-  // h->on_stream_close(stream_id);
+    uint16_t app_error_code) {}
+
+int QuicSession::UpdateKey() {
   return 0;
 }
 
-int QuicSession::rand(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    size_t destlen,
-    ngtcp2_rand_ctx ctx,
-    void* user_data) {
-  auto dis = std::uniform_int_distribution<uint8_t>(0, 255);
-  std::generate(dest, dest + destlen, [&dis]() { return dis(randgen); });
-  return 0;
-}
+void QuicSession::RemoveConnectionID(const ngtcp2_cid* cid) {}
 
-int QuicSession::get_new_connection_id(
-    ngtcp2_conn* conn,
+int QuicSession::GetNewConnectionID(
     ngtcp2_cid* cid,
     uint8_t* token,
-    size_t cidlen,
-    void* user_data) {
+    size_t cidlen) {
   // auto dis = std::uniform_int_distribution<uint8_t>(0, 255);
   // auto f = [&dis]() { return dis(randgen); };
 
@@ -421,33 +303,259 @@ int QuicSession::get_new_connection_id(
   return 0;
 }
 
-int QuicSession::update_key(
-    ngtcp2_conn* conn,
-    void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-  // if (h->update_key() != 0) {
-  //   return NGTCP2_ERR_CALLBACK_FAILURE;
-  // }
+
+int QuicSession::OnReceiveClientInitial(
+    ngtcp2_conn *conn,
+    const ngtcp2_cid *dcid,
+    void *user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  if (session->ReceiveClientInitial(dcid) != 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
   return 0;
 }
 
-int QuicSession::remove_connection_id(
+int QuicSession::OnReceiveCryptoData(
+    ngtcp2_conn *conn,
+    uint64_t offset,
+    const uint8_t *data,
+    size_t datalen,
+    void *user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  return session->ReceiveCryptoData(offset, data, datalen);
+}
+
+int QuicSession::OnHandshakeCompleted(ngtcp2_conn *conn, void *user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  session->HandshakeCompleted();
+  return 0;
+}
+
+ssize_t QuicSession::OnDoHSEncrypt(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* plaintext,
+    size_t plaintextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  ssize_t nwrite = session->DoHSEncrypt(dest, destlen,
+                                        plaintext, plaintextlen,
+                                        key, keylen,
+                                        nonce, noncelen,
+                                        ad, adlen);
+  if (nwrite < 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return nwrite;
+}
+
+ssize_t QuicSession::OnDoHSDecrypt(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* ciphertext,
+    size_t ciphertextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  ssize_t nwrite = session->DoHSDecrypt(dest, destlen,
+                                        ciphertext, ciphertextlen,
+                                        key, keylen,
+                                        nonce, noncelen,
+                                        ad, adlen);
+  if (nwrite < 0)
+    return NGTCP2_ERR_TLS_DECRYPT;
+  return nwrite;
+}
+
+ssize_t QuicSession::OnDoEncrypt(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* plaintext,
+    size_t plaintextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  ssize_t nwrite = session->DoEncrypt(dest, destlen,
+                                      plaintext, plaintextlen,
+                                      key, keylen,
+                                      nonce, noncelen,
+                                      ad, adlen);
+  if (nwrite < 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return nwrite;
+}
+
+ssize_t QuicSession::OnDoDecrypt(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* ciphertext,
+    size_t ciphertextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  ssize_t nwrite = session->DoDecrypt(dest, destlen,
+                                      ciphertext, ciphertextlen,
+                                      key, keylen,
+                                      nonce, noncelen,
+                                      ad, adlen);
+  if (nwrite < 0)
+    return NGTCP2_ERR_TLS_DECRYPT;
+  return nwrite;
+}
+
+ssize_t QuicSession::OnDoInHPMask(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* sample,
+    size_t samplelen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  ssize_t nwrite = session->DoInHPMask(dest, destlen,
+                                       key, keylen,
+                                       sample, samplelen);
+  if (nwrite < 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return nwrite;
+}
+
+ssize_t QuicSession::OnDoHPMask(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* sample,
+    size_t samplelen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  ssize_t nwrite = session->DoHPMask(dest, destlen,
+                                     key, keylen,
+                                     sample, samplelen);
+  if (nwrite < 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return nwrite;
+}
+
+int QuicSession::OnReceiveStreamData(
+    ngtcp2_conn* conn,
+    uint64_t stream_id,
+    int fin,
+    uint64_t offset,
+    const uint8_t* data,
+    size_t datalen,
+    void* user_data,
+    void* stream_user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  if (session->ReceiveStreamData(stream_id, fin, offset, data, datalen) != 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return 0;
+}
+
+int QuicSession::OnAckedCryptoOffset(
+    ngtcp2_conn* conn,
+    uint64_t offset,
+    size_t datalen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  session->AckedCryptoOffset(offset, datalen);
+  return 0;
+}
+
+int QuicSession::OnAckedStreamDataOffset(
+    ngtcp2_conn* conn,
+    uint64_t stream_id,
+    uint64_t offset,
+    size_t datalen,
+    void* user_data,
+    void* stream_user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  if (session->AckedStreamDataOffset(stream_id, offset, datalen) != 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return 0;
+}
+
+int QuicSession::OnStreamClose(
+    ngtcp2_conn* conn,
+    uint64_t stream_id,
+    uint16_t app_error_code,
+    void* user_data,
+    void* stream_user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  session->StreamClose(stream_id, app_error_code);
+  return 0;
+}
+
+int QuicSession::OnRand(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    ngtcp2_rand_ctx ctx,
+    void* user_data) {
+  auto dis = std::uniform_int_distribution<uint8_t>(0, 255);
+  std::generate(dest, dest + destlen, [&dis]() { return dis(randgen); });
+  return 0;
+}
+
+int QuicSession::OnGetNewConnectionID(
+    ngtcp2_conn* conn,
+    ngtcp2_cid* cid,
+    uint8_t* token,
+    size_t cidlen,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  session->GetNewConnectionID(cid, token, cidlen);
+  return 0;
+}
+
+int QuicSession::OnUpdateKey(
+    ngtcp2_conn* conn,
+    void* user_data) {
+  auto session = static_cast<QuicSession*>(user_data);
+  if (session->UpdateKey() != 0)
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  return 0;
+}
+
+int QuicSession::OnRemoveConnectionID(
     ngtcp2_conn* conn,
     const ngtcp2_cid* cid,
     void* user_data) {
-  // auto h = static_cast<Handler *>(user_data);
-  // h->server()->dissociate_cid(cid);
+  auto session = static_cast<QuicSession*>(user_data);
+  session->RemoveConnectionID(cid);
   return 0;
 }
 
-int QuicSession::path_validation(
+int QuicSession::OnPathValidation(
     ngtcp2_conn* conn,
     const ngtcp2_path* path,
     ngtcp2_path_validation_result res,
     void* user_data) {
-  // if (!config.quiet) {
-  //   debug::path_validation(path, res);
-  // }
   return 0;
 }
 
@@ -460,30 +568,30 @@ int QuicServerSession::Init(const struct sockaddr* addr,
 
   auto callbacks = ngtcp2_conn_callbacks{
     nullptr,
-    QuicSession::recv_client_initial,
-    QuicSession::recv_crypto_data,
-    QuicSession::handshake_completed,
+    QuicSession::OnReceiveClientInitial,
+    QuicSession::OnReceiveCryptoData,
+    QuicSession::OnHandshakeCompleted,
     nullptr,
-    QuicSession::do_hs_encrypt,
-    QuicSession::do_hs_decrypt,
-    QuicSession::do_encrypt,
-    QuicSession::do_decrypt,
-    QuicSession::do_in_hp_mask,
-    QuicSession::do_hp_mask,
-    QuicSession::recv_stream_data,
-    QuicSession::acked_crypto_offset,
-    QuicSession::acked_stream_data_offset,
+    QuicSession::OnDoHSEncrypt,
+    QuicSession::OnDoHSDecrypt,
+    QuicSession::OnDoEncrypt,
+    QuicSession::OnDoDecrypt,
+    QuicSession::OnDoInHPMask,
+    QuicSession::OnDoHPMask,
+    QuicSession::OnReceiveStreamData,
+    QuicSession::OnAckedCryptoOffset,
+    QuicSession::OnAckedStreamDataOffset,
     nullptr,  // stream_open
-    QuicSession::stream_close,
+    QuicSession::OnStreamClose,
     nullptr,  // recv_stateless_reset
     nullptr,  // recv_retry
     nullptr,  // extend_max_streams_bidi
     nullptr,  // extend_max_streams_uni
-    QuicSession::rand,
-    QuicSession::get_new_connection_id,
-    QuicSession::remove_connection_id,
-    QuicSession::update_key,
-    QuicSession::path_validation
+    QuicSession::OnRand,
+    QuicSession::OnGetNewConnectionID,
+    QuicSession::OnRemoveConnectionID,
+    QuicSession::OnUpdateKey,
+    QuicSession::OnPathValidation
   };
 
   ngtcp2_settings settings{};

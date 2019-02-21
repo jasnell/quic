@@ -122,47 +122,108 @@ class QuicSession {
                       const struct sockaddr* addr,
                       unsigned int flags) = 0;
 
+  int ReceiveClientInitial(const ngtcp2_cid* dcid);
+  int ReceiveCryptoData(uint64_t offset,
+                        const uint8_t* data,
+                        size_t datalen);
+  void HandshakeCompleted();
+  ssize_t DoHSEncrypt(
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* plaintext,
+    size_t plaintextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen);
+  ssize_t DoHSDecrypt(
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* ciphertext,
+    size_t ciphertextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen);
+  ssize_t DoEncrypt(
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* plaintext,
+    size_t plaintextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen);
+  ssize_t DoDecrypt(
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* ciphertext,
+    size_t ciphertextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen);
+  ssize_t DoInHPMask(
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* sample,
+    size_t samplelen);
+  ssize_t DoHPMask(
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* sample,
+    size_t samplelen);
+  int ReceiveStreamData(
+    uint64_t stream_id,
+    int fin,
+    uint64_t offset,
+    const uint8_t* data,
+    size_t datalen);
+  void AckedCryptoOffset(
+    uint64_t offset,
+    size_t datalen);
+  int AckedStreamDataOffset(
+    uint64_t stream_id,
+    uint64_t offset,
+    size_t datalen);
+  void StreamClose(
+    uint64_t stream_id,
+    uint16_t app_error_code);
+  int UpdateKey();
+  void RemoveConnectionID(const ngtcp2_cid* cid);
+  int GetNewConnectionID(
+    ngtcp2_cid* cid,
+    uint8_t* token,
+    size_t cidlen);
+
+
   // ngtcp2 callbacks
-  static int recv_client_initial(
+  static int OnReceiveClientInitial(
     ngtcp2_conn* conn,
-    const ngtcp2_cid *dcid,
+    const ngtcp2_cid* dcid,
     void* user_data);
-  static int recv_crypto_data(
+  static int OnReceiveCryptoData(
     ngtcp2_conn* conn,
     uint64_t offset,
-    const uint8_t *data,
+    const uint8_t* data,
     size_t datalen,
     void* user_data);
-  static int handshake_completed(
+  static int OnHandshakeCompleted(
     ngtcp2_conn* conn,
     void* user_data);
-  static ssize_t do_hs_encrypt(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* plaintext,
-    size_t plaintextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen,
-    void* user_data);
-  static ssize_t do_hs_decrypt(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* ciphertext,
-    size_t ciphertextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen,
-    void* user_data);
-  static ssize_t do_encrypt(
+  static ssize_t OnDoHSEncrypt(
     ngtcp2_conn* conn,
     uint8_t* dest,
     size_t destlen,
@@ -175,7 +236,7 @@ class QuicSession {
     const uint8_t* ad,
     size_t adlen,
     void* user_data);
-  static ssize_t do_decrypt(
+  static ssize_t OnDoHSDecrypt(
     ngtcp2_conn* conn,
     uint8_t* dest,
     size_t destlen,
@@ -188,7 +249,33 @@ class QuicSession {
     const uint8_t* ad,
     size_t adlen,
     void* user_data);
-  static ssize_t do_in_hp_mask(
+  static ssize_t OnDoEncrypt(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* plaintext,
+    size_t plaintextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen,
+    void* user_data);
+  static ssize_t OnDoDecrypt(
+    ngtcp2_conn* conn,
+    uint8_t* dest,
+    size_t destlen,
+    const uint8_t* ciphertext,
+    size_t ciphertextlen,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* nonce,
+    size_t noncelen,
+    const uint8_t* ad,
+    size_t adlen,
+    void* user_data);
+  static ssize_t OnDoInHPMask(
     ngtcp2_conn* conn,
     uint8_t* dest,
     size_t destlen,
@@ -197,7 +284,7 @@ class QuicSession {
     const uint8_t* sample,
     size_t samplelen,
     void* user_data);
-  static ssize_t do_hp_mask(
+  static ssize_t OnDoHPMask(
     ngtcp2_conn* conn,
     uint8_t* dest,
     size_t destlen,
@@ -206,7 +293,7 @@ class QuicSession {
     const uint8_t* sample,
     size_t samplelen,
     void* user_data);
-  static int recv_stream_data(
+  static int OnReceiveStreamData(
     ngtcp2_conn* conn,
     uint64_t stream_id,
     int fin,
@@ -215,44 +302,44 @@ class QuicSession {
     size_t datalen,
     void* user_data,
     void* stream_user_data);
-  static int acked_crypto_offset(
+  static int OnAckedCryptoOffset(
     ngtcp2_conn* conn,
     uint64_t offset,
     size_t datalen,
     void* user_data);
-  static int acked_stream_data_offset(
+  static int OnAckedStreamDataOffset(
     ngtcp2_conn* conn,
     uint64_t stream_id,
     uint64_t offset,
     size_t datalen,
     void* user_data,
     void* stream_user_data);
-  static int stream_close(
+  static int OnStreamClose(
     ngtcp2_conn* conn,
     uint64_t stream_id,
     uint16_t app_error_code,
     void* user_data,
     void* stream_user_data);
-  static int rand(
+  static int OnRand(
     ngtcp2_conn* conn,
     uint8_t* dest,
     size_t destlen,
     ngtcp2_rand_ctx ctx,
     void* user_data);
-  static int get_new_connection_id(
+  static int OnGetNewConnectionID(
     ngtcp2_conn* conn,
     ngtcp2_cid* cid,
     uint8_t* token,
     size_t cidlen,
     void* user_data);
-  static int remove_connection_id(
+  static int OnRemoveConnectionID(
     ngtcp2_conn* conn,
     const ngtcp2_cid* cid,
     void* user_data);
-  static int update_key(
+  static int OnUpdateKey(
     ngtcp2_conn* conn,
     void* user_data);
-  static int path_validation(
+  static int OnPathValidation(
     ngtcp2_conn* conn,
     const ngtcp2_path* path,
     ngtcp2_path_validation_result res,
