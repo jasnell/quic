@@ -815,12 +815,12 @@ int QuicServerSession::Init(const struct sockaddr* addr,
   auto path = ngtcp2_path{
       // Local Address
       {
-        addrlen,
+        static_cast<socklen_t>(addrlen),
         const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(&local_addr))
       },
       // Remote Address
       {
-        remote_len,
+        static_cast<socklen_t>(remote_len),
         const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(addr))
       }
     };
