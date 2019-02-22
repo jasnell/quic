@@ -538,6 +538,7 @@
         'src/node_platform.h',
         'src/node_process.h',
         'src/node_quic.h',
+        'src/node_quic_crypto-inl.h',
         'src/node_revert.h',
         'src/node_root_certs.h',
         'src/node_stat_watcher.h',

@@ -13,6 +13,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <algorithm>
+#include <array>
 #include <string>
 
 namespace node {
@@ -42,6 +43,7 @@ void DebugLog(void *user_data, const char *fmt, ...) {
 //   Debug(session, fmt, args);
 //   va_end(args);
 }
+
 }  // namespace
 
 QuicSocketConfig::QuicSocketConfig(Environment* env) {}
@@ -132,37 +134,223 @@ QuicServerSession* QuicServerSession::New(QuicSocket* socket) {
   return new QuicServerSession(socket, obj);
 }
 
+void QuicServerSession::WriteHandshake(const uint8_t* data, size_t datalen) {
+  std::copy_n(data, datalen, std::back_inserter(chandshake_));
+}
+
+int QuicSession::TLSHandshake() {
+  // ERR_clear_error();
+
+  // int rv;
+
+  // if (initial_) {
+  //   std::array<uint8_t, 8> buf;
+  //   size_t nread;
+  //   rv = SSL_read_early_data(ssl_, buf.data(), buf.size(), &nread);
+  //   initial_ = false;
+  //   switch (rv) {
+  //   case SSL_READ_EARLY_DATA_ERROR: {
+  //     if (!config.quiet) {
+  //       std::cerr << "SSL_READ_EARLY_DATA_ERROR" << std::endl;
+  //     }
+  //     auto err = SSL_get_error(ssl_, rv);
+  //     switch (err) {
+  //     case SSL_ERROR_WANT_READ:
+  //     case SSL_ERROR_WANT_WRITE: {
+  //       return 0;
+  //     }
+  //     case SSL_ERROR_SSL:
+  //       std::cerr << "TLS handshake error: "
+  //                 << ERR_error_string(ERR_get_error(), nullptr) << std::endl;
+  //       return NGTCP2_ERR_CRYPTO;
+  //     default:
+  //       std::cerr << "TLS handshake error: " << err << std::endl;
+  //       return NGTCP2_ERR_CRYPTO;
+  //     }
+  //     break;
+  //   }
+  //   case SSL_READ_EARLY_DATA_SUCCESS:
+  //     if (!config.quiet) {
+  //       std::cerr << "SSL_READ_EARLY_DATA_SUCCESS" << std::endl;
+  //     }
+  //     // Reading 0-RTT data in TLS stream is a protocol violation.
+  //     if (nread > 0) {
+  //       return NGTCP2_ERR_PROTO;
+  //     }
+  //     break;
+  //   case SSL_READ_EARLY_DATA_FINISH:
+  //     if (!config.quiet) {
+  //       std::cerr << "SSL_READ_EARLY_DATA_FINISH" << std::endl;
+  //     }
+  //     break;
+  //   }
+  // }
+
+  // rv = SSL_do_handshake(ssl_);
+  // if (rv <= 0) {
+  //   auto err = SSL_get_error(ssl_, rv);
+  //   switch (err) {
+  //   case SSL_ERROR_WANT_READ:
+  //   case SSL_ERROR_WANT_WRITE:
+  //     return 0;
+  //   case SSL_ERROR_SSL:
+  //     std::cerr << "TLS handshake error: "
+  //               << ERR_error_string(ERR_get_error(), nullptr) << std::endl;
+  //     return NGTCP2_ERR_CRYPTO;
+  //   default:
+  //     std::cerr << "TLS handshake error: " << err << std::endl;
+  //     return NGTCP2_ERR_CRYPTO;
+  //   }
+  // }
+
+  // // SSL_do_handshake returns 1 if TLS handshake has completed.  With
+  // // boringSSL, it may return 1 if we have 0-RTT early data.  This is
+  // // a problem, but for First Implementation draft, 0-RTT early data
+  // // is out of interest.
+  // ngtcp2_conn_handshake_completed(conn_);
+
+  // if (!config.quiet) {
+  //   std::cerr << "Negotiated cipher suite is " << SSL_get_cipher_name(ssl_)
+  //             << std::endl;
+
+  //   const unsigned char *alpn = nullptr;
+  //   unsigned int alpnlen;
+
+  //   SSL_get0_alpn_selected(ssl_, &alpn, &alpnlen);
+  //   if (alpn) {
+  //     std::cerr << "Negotiated ALPN is ";
+  //     std::cerr.write(reinterpret_cast<const char *>(alpn), alpnlen);
+  //     std::cerr << std::endl;
+  //   }
+  // }
+
+  return 0;
+}
+
+int QuicSession::TLSRead() {
+  // TODO: Implement
+  return 0;
+}
+
 int QuicSession::ReceiveClientInitial(const ngtcp2_cid* dcid) {
-  // TODO(@jasnell): Implement this
+  int err;
+  std::array<uint8_t, 32> initial_secret, secret;
+  std::array<uint8_t, 16> key, iv, hp;
+
+  quic::prf_sha256(hs_crypto_ctx_);
+  quic::aead_aes_128_gcm(hs_crypto_ctx_);
+
+  err = quic::DeriveInitialSecret(
+      initial_secret.data(),
+      initial_secret.size(),
+      dcid,
+      reinterpret_cast<const uint8_t *>(NGTCP2_INITIAL_SALT),
+      arraysize(NGTCP2_INITIAL_SALT));
+  if (err != 0) {
+    // Derive Initial Secret Failed
+    return -1;
+  }
+
+  err = quic::DeriveServerInitialSecret(
+      secret.data(),
+      secret.size(),
+      initial_secret.data(),
+      initial_secret.size());
+  if (err != 0) {
+    // Derive Server Initial Secret Failed
+    return -1;
+  }
+
+  ssize_t keylen = quic::DerivePacketProtectionKey(
+      key.data(), key.size(),
+      secret.data(), secret.size(),
+      hs_crypto_ctx_);
+  if (keylen < 0) {
+    // Derive Packet Protection Key Failed
+    return -1;
+  }
+
+  ssize_t ivlen = quic::DerivePacketProtectionIV(
+      iv.data(), iv.size(),
+      secret.data(), secret.size(),
+      hs_crypto_ctx_);
+  if (ivlen < 0) {
+    // Derive Packet Protection IV Failed
+    return -1;
+  }
+
+  ssize_t hplen = quic::DeriveHeaderProtectionKey(
+      hp.data(), hp.size(),
+      secret.data(), secret.size(),
+      hs_crypto_ctx_);
+  if (hplen < 0) {
+    // Derive Header Protection Key Failed
+    return -1;
+  }
+
+  ngtcp2_conn_install_initial_tx_keys(
+      connection_,
+      key.data(), keylen,
+      iv.data(), ivlen,
+      hp.data(), hplen);
+
+  err = quic::DeriveClientInitialSecret(secret.data(), secret.size(),
+                                        initial_secret.data(),
+                                        initial_secret.size());
+  if (err != 0) {
+    // Derive Client Initial Secret Failed
+    return -1;
+  }
+
+  keylen = quic::DerivePacketProtectionKey(
+      key.data(),
+      key.size(),
+      secret.data(),
+      secret.size(),
+      hs_crypto_ctx_);
+  if (keylen < 0) {
+    // Derive Packet Protection Key Failed
+    return -1;
+  }
+
+  ivlen = quic::DerivePacketProtectionIV(
+      iv.data(), iv.size(),
+      secret.data(), secret.size(),
+      hs_crypto_ctx_);
+  if (ivlen < 0) {
+    // Derive Packet Protection IV Failed
+    return -1;
+  }
+
+  hplen = quic::DeriveHeaderProtectionKey(
+      hp.data(), hp.size(),
+      secret.data(), secret.size(),
+      hs_crypto_ctx_);
+  if (hplen < 0) {
+    // Derive Header Protection Key
+    return -1;
+  }
+
+  ngtcp2_conn_install_initial_rx_keys(
+    connection_,
+    key.data(), keylen,
+    iv.data(), ivlen,
+    hp.data(), hplen);
+
   return 0;
 }
 
 int QuicSession::ReceiveCryptoData(uint64_t offset,
                                    const uint8_t* data,
                                    size_t datalen) {
-  // TODO(@jasnell): Implement this
-  // int rv;
-
-  // if (!config.quiet) {
-  //   debug::print_crypto_data(data, datalen);
-  // }
-
-  // auto h = static_cast<Handler *>(user_data);
-
-  // h->write_client_handshake(data, datalen);
-
-  // if (!ngtcp2_conn_get_handshake_completed(h->conn())) {
-  //   rv = h->tls_handshake();
-  //   if (rv != 0) {
-  //     return rv;
-  //   }
-  //   return 0;
-  // }
-
-  // // SSL_do_handshake() might not consume all data (e.g.,
-  // // NewSessionTicket).
-  // return h->read_tls();
-  return 0;
+  WriteHandshake(data, datalen);
+  if (!IsHandshakeCompleted()) {
+    int err = TLSHandshake();
+    if (err != 0)
+      return err;
+    return 0;
+  }
+  return TLSRead();
 }
 
 void QuicSession::HandshakeCompleted() {}

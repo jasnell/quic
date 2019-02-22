@@ -11,12 +11,14 @@
 #include "handle_wrap.h"
 #include "v8.h"
 #include "uv.h"
+#include "node_quic_crypto-inl.h"
 
 #include <openssl/ssl.h>
 
 #include <map>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace node {
 
@@ -121,6 +123,8 @@ class QuicSession {
                       const uint8_t* data,
                       const struct sockaddr* addr,
                       unsigned int flags) = 0;
+
+  virtual void WriteHandshake(const uint8_t *data, size_t datalen) = 0;
 
   int ReceiveClientInitial(const ngtcp2_cid* dcid);
   int ReceiveCryptoData(uint64_t offset,
@@ -351,6 +355,13 @@ class QuicSession {
   // void RemoveStream(uint32_t id);
   // void RemoveStream(QuicStream* stream);
 
+  bool IsHandshakeCompleted() {
+    return ngtcp2_conn_get_handshake_completed(connection_);
+  }
+
+  int TLSHandshake();
+  int TLSRead();
+
   ngtcp2_conn* Connection() const { return connection_; }
   ngtcp2_conn* operator*() const { return connection_; }
 
@@ -365,6 +376,8 @@ class QuicSession {
   ngtcp2_conn* connection_;
   const sockaddr* remote_address_;
   size_t max_pktlen_;
+  quic::CryptoContext hs_crypto_ctx_;
+  quic::CryptoContext crypto_ctx_;
 
   BIO* enc_in_ = nullptr;   // StreamListener fills this for SSL_read().
   BIO* enc_out_ = nullptr;  // SSL_write()/handshake fills this for EncOut().
@@ -410,6 +423,8 @@ class QuicServerSession : public AsyncWrap,
               const struct sockaddr* addr,
               unsigned int flags) override;
 
+  void WriteHandshake(const uint8_t *data, size_t datalen) override;
+
   const ngtcp2_cid* scid() const { return &scid_; }
 
   void MemoryInfo(MemoryTracker* tracker) const override {}
@@ -428,6 +443,7 @@ class QuicServerSession : public AsyncWrap,
   QuicServerSession(QuicSocket* socket, Local<Object> wrap);
 
   ngtcp2_cid scid_;
+  std::vector<uint8_t> chandshake_;
 };
 
 class QuicClientSession : public AsyncWrap,
