@@ -3,6 +3,7 @@
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
+#include "string_bytes.h"
 #include "uv.h"
 #include "v8.h"
 
@@ -36,25 +37,75 @@ constexpr uint16_t NGTCP2_APP_NOERROR = 0xff00;
 
 constexpr size_t MIN_INITIAL_QUIC_PKT_SIZE = 1200;
 constexpr size_t NGTCP2_SV_SCIDLEN = 18;
+constexpr size_t TOKEN_RAND_DATALEN = 16;
+constexpr size_t TOKEN_SECRETLEN = 16;
 constexpr size_t DEFAULT_MAX_STREAM_DATA_BIDI_LOCAL = 256_k;
 
 class SocketAddress {
  public:
+  static size_t GetMaxPktLen(const sockaddr* addr) {
+    return addr->sa_family ? NGTCP2_MAX_PKTLEN_IPV6 : NGTCP2_MAX_PKTLEN_IPV4;
+  }
+
+  static int ToSockAddr(
+      int32_t family,
+      const char* host,
+      uint32_t port,
+      sockaddr_storage* addr) {
+    CHECK(family == AF_INET || family == AF_INET6);
+    int err = 0;
+    switch (family) {
+       case AF_INET:
+        err = uv_ip4_addr(host, port, reinterpret_cast<sockaddr_in*>(addr));
+        break;
+      case AF_INET6:
+        err = uv_ip6_addr(host, port, reinterpret_cast<sockaddr_in6*>(addr));
+         break;
+       default:
+        CHECK(0 && "unexpected address family");
+        ABORT();
+    }
+    return err;
+  }
+
+  static int GetPort(const sockaddr* addr) {
+    return ntohs(addr->sa_family == AF_INET ?
+        reinterpret_cast<const sockaddr_in*>(addr)->sin_port :
+        reinterpret_cast<const sockaddr_in6*>(addr)->sin6_port);
+  }
+
+  static void GetAddress(const sockaddr* addr, char** host) {
+    char hostbuf[INET6_ADDRSTRLEN];
+    const void* src = addr->sa_family == AF_INET ?
+        static_cast<const void*>(
+            &(reinterpret_cast<const sockaddr_in*>(addr)->sin_addr)) :
+        static_cast<const void*>(
+            &(reinterpret_cast<const sockaddr_in6*>(addr)->sin6_addr));
+    if (uv_inet_ntop(addr->sa_family, src, hostbuf, sizeof(hostbuf)) == 0) {
+      *host = hostbuf;
+    }
+  }
+
+  static size_t GetAddressLen(const sockaddr* addr) {
+    return
+        addr->sa_family == AF_INET6 ?
+            sizeof(sockaddr_in6) :
+            sizeof(sockaddr_in);
+  }
+
+  static size_t GetAddressLen(const sockaddr_storage* addr) {
+    return
+        addr->ss_family == AF_INET6 ?
+            sizeof(sockaddr_in6) :
+            sizeof(sockaddr_in);
+  }
+
   void Copy(SocketAddress* addr) {
     memcpy(&address_, **addr, addr->Size());
   }
 
   void Copy(const sockaddr* source) {
-    switch (source->sa_family) {
-      case AF_INET6:
-        memcpy(&address_, source, sizeof(sockaddr_in6));
-        break;
-      case AF_INET:
-        memcpy(&address_, source, sizeof(sockaddr_in));
-        break;
-      default:
-        UNREACHABLE();
-    }
+    memcpy(&address_, source, GetAddressLen(source));
   }
 
   void Set(uv_udp_t* handle) {
@@ -66,7 +117,6 @@ class SocketAddress {
   }
 
   void Update(const ngtcp2_addr* addr) {
-    // TODO(@jasnell): Is this right?
     memcpy(&address_, addr->addr, sizeof(addr->len));
   }
 
@@ -79,15 +129,7 @@ class SocketAddress {
   }
 
   size_t Size() {
-    switch (address_.ss_family) {
-      case AF_INET6:
-        return sizeof(sockaddr_in6);
-      case AF_INET:
-        return sizeof(sockaddr_in);
-        break;
-      default:
-        UNREACHABLE();
-    }
+    return GetAddressLen(&address_);
   }
 
  private:
@@ -120,6 +162,7 @@ class QuicBuffer {
     }
     return len;
   }
+
   static size_t AckData(
       std::deque<QuicBuffer>& d,
       size_t& idx,
@@ -267,12 +310,31 @@ struct QuicPathStorage {
   std::array<uint8_t, sizeof(sockaddr_storage)> remote_addrbuf;
 };
 
-struct CryptoContext {
-  const EVP_CIPHER *aead;
-  const EVP_CIPHER *hp;
-  const EVP_MD *prf;
-  std::array<uint8_t, 64> tx_secret, rx_secret;
-  size_t secretlen;
+class QuicCID {
+ public:
+  explicit QuicCID(ngtcp2_cid* cid) : cid_(cid) {}
+  explicit QuicCID(const ngtcp2_cid* cid) : cid_(cid) {}
+  explicit QuicCID(const ngtcp2_cid& cid) : cid_(&cid) {}
+
+  std::string ToStr() {
+    return std::string(cid_->data, cid_->data + cid_->datalen);
+  }
+
+  std::string ToHex() {
+    MaybeStackBuffer<char, 20> dest;
+    dest.AllocateSufficientStorage(cid_->datalen * 2);
+    size_t written = StringBytes::hex_encode(
+        reinterpret_cast<const char*>(cid_->data),
+        cid_->datalen,
+        *dest,
+        dest.length());
+    return std::string(*dest, written);
+  }
+
+  const ngtcp2_cid* operator*() const { return cid_; }
+
+ private:
+  const ngtcp2_cid* cid_;
 };
 
 // https://stackoverflow.com/questions/33701430/template-function-to-access-struct-members
@@ -286,6 +348,53 @@ decltype(auto) access(C& cls, T C::*member, Mems... rest) {
   return access((cls.*member), rest...);
 }
 
+typedef int(*install_fn)(
+    ngtcp2_conn* conn,
+    const uint8_t* key,
+    size_t keylen,
+    const uint8_t* iv,
+    size_t ivlen,
+    const uint8_t* pn,
+    size_t pnlen);
+
+typedef void(*set_ssl_state_fn)(SSL* ssl);
+
+struct CryptoContext {
+  const EVP_CIPHER *aead;
+  const EVP_CIPHER *hp;
+  const EVP_MD *prf;
+  std::array<uint8_t, 64> tx_secret;
+  std::array<uint8_t, 64> rx_secret;
+  size_t secretlen;
+};
+
+struct CryptoInitialParams {
+  std::array<uint8_t, 32> initial_secret;
+  std::array<uint8_t, 32> secret;
+  std::array<uint8_t, 16> key;
+  std::array<uint8_t, 16> iv;
+  std::array<uint8_t, 16> hp;
+  ssize_t keylen;
+  ssize_t ivlen;
+  ssize_t hplen;
+};
+
+struct CryptoParams {
+  std::array<uint8_t, 64> key;
+  std::array<uint8_t, 64> iv;
+  std::array<uint8_t, 64> hp;
+  ssize_t keylen;
+  ssize_t ivlen;
+  ssize_t hplen;
+};
+
+struct CryptoToken {
+  std::array<uint8_t, 32> key;
+  std::array<uint8_t, 32> iv;
+  size_t keylen;
+  size_t ivlen;
+  CryptoToken() : keylen(key.size()), ivlen(iv.size()) {}
+};
 
 }  // namespace quic
 }  // namespace node

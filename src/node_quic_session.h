@@ -86,9 +86,7 @@ class QuicSession : public AsyncWrap {
   virtual uint32_t GetNegotiatedVersion();
   virtual SocketAddress* GetRemoteAddress();
   virtual void HandshakeCompleted() {};
-  virtual void InitTLS(
-    SSL* ssl,
-    bool is_server);
+
   virtual bool IsHandshakeCompleted();
   virtual int OnKey(
     int name,
@@ -111,6 +109,10 @@ class QuicSession : public AsyncWrap {
   virtual void RemoveStream(
     uint64_t stream_id);
   virtual void ScheduleRetransmit();
+  virtual int Send0RTTStreamData(
+      QuicStream* stream,
+      int fin,
+      QuicBuffer& data);
   virtual int SendStreamData(
       QuicStream* stream,
       int fin,
@@ -140,6 +142,26 @@ class QuicSession : public AsyncWrap {
   virtual void WriteHandshake(
     const uint8_t* data,
     size_t datalen);
+
+  inline bool IsDestroyed();
+  template <set_ssl_state_fn fn>
+  inline void InitTLS(SSL* ssl);
+
+  static void SetupTokenContext(CryptoContext& context);
+  static int GenerateToken(
+    uint8_t* token,
+    size_t& tokenlen,
+    const sockaddr* addr,
+    const ngtcp2_cid* ocid,
+    CryptoContext& context,
+    std::array<uint8_t, TOKEN_SECRETLEN>& token_secret);
+  static int VerifyToken(
+    Environment* env,
+    ngtcp2_cid* ocid,
+    const ngtcp2_pkt_hd* hd,
+    const sockaddr* addr,
+    CryptoContext& context,
+    std::array<uint8_t, TOKEN_SECRETLEN>& token_secret);
 
   // These must be implemented by QuicSession types
   virtual int DoHandshake(
@@ -550,13 +572,15 @@ class QuicClientSession : public QuicSession,
   static QuicClientSession* New(
     QuicSocket* socket,
     const struct sockaddr* addr,
-    uint32_t version);
+    uint32_t version,
+    crypto::SecureContext* context);
 
   QuicClientSession(
     QuicSocket* socket,
     v8::Local<v8::Object> wrap,
     const struct sockaddr* addr,
-    uint32_t version);
+    uint32_t version,
+    crypto::SecureContext* context);
 
   int DoHandshake(
     const uint8_t* data,

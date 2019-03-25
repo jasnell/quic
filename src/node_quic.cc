@@ -258,7 +258,7 @@ void Initialize(Local<Object> target,
               FIXED_ONE_BYTE_STRING(isolate, (name)), \
               (field)).FromJust()
   SET_STATE_TYPEDARRAY(
-    "socketConfig", state->quicsocketconfig_buffer.GetJSArray());
+    "socketConfig", state->quicsessionconfig_buffer.GetJSArray());
 #undef SET_STATE_TYPEDARRAY
 
   env->set_quic_state(std::move(state));
