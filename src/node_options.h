@@ -105,6 +105,8 @@ class EnvironmentOptions : public Options {
   bool preserve_symlinks = false;
   bool preserve_symlinks_main = false;
   bool prof_process = false;
+  bool has_quic_keylog = false;
+  std::string quic_keylog_file;
   std::string redirect_warnings;
   bool throw_deprecation = false;
   bool trace_deprecation = false;

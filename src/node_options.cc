@@ -280,6 +280,15 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             &EnvironmentOptions::prof_process);
   // Options after --prof-process are passed through to the prof processor.
   AddAlias("--prof-process", { "--prof-process", "--" });
+  AddOption("--quic-keylog",
+            "write QUIC TLS keylog output to a file",
+            &EnvironmentOptions::has_quic_keylog,
+            kAllowedInEnvironment);
+  AddOption("--quic-keylog-file",
+            "write QUIC TLS keylog output to a file",
+            &EnvironmentOptions::quic_keylog_file,
+            kAllowedInEnvironment);
+  Implies("--quic-keylog-file", "--quic-keylog");
   AddOption("--redirect-warnings",
             "write warnings to file instead of stderr",
             &EnvironmentOptions::redirect_warnings,
