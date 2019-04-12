@@ -393,6 +393,7 @@ constexpr size_t kFsStatsBufferLength = kFsStatsFieldsNumber * 2;
   V(quic_on_session_error_function, v8::Function)                              \
   V(quic_on_session_extend_function, v8::Function)                             \
   V(quic_on_session_handshake_function, v8::Function)                          \
+  V(quic_on_session_ticket_function, v8::Function)                             \
   V(quic_on_stream_ready_function, v8::Function)                               \
   V(quic_on_stream_close_function, v8::Function)                               \
   V(quic_on_stream_error_function, v8::Function)                               \
@@ -510,6 +511,7 @@ struct AllocatedBuffer {
   inline ~AllocatedBuffer();
   inline void Resize(size_t len);
 
+  inline bool empty();
   inline uv_buf_t release();
   inline char* data();
   inline const char* data() const;
