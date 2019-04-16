@@ -1095,6 +1095,7 @@
         'test/cctest/test_environment.cc',
         'test/cctest/test_linked_binding.cc',
         'test/cctest/test_platform.cc',
+        'test/cctest/test_quic_buffer.cc',
         'test/cctest/test_report_util.cc',
         'test/cctest/test_traced_value.cc',
         'test/cctest/test_util.cc',
