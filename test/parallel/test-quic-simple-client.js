@@ -13,7 +13,7 @@ const socket = createSocket({ type: 'udp4', port: 1235 });
 const kALPN = 'h3-20';
 
 const countdown = new Countdown(2, () => {
-  socket.destroy();
+  socket.close();
 });
 
 const client = socket.connect({

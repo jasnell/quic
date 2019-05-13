@@ -37,6 +37,8 @@ socket.on('session', common.mustCall((session) => {
     stream.resume();
     stream.on('end', () => console.log('stream ended'));
   }));
+
+  session.on('close', () => console.log('session closed'));
 }));
 
 socket.on('ready', common.mustCall(() => {
