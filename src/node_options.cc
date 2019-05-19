@@ -370,15 +370,6 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "placed. Does not affect --prof.",
             &EnvironmentOptions::cpu_prof_dir);
 #endif  // HAVE_INSPECTOR
-  AddOption("--quic-keylog",
-            "write QUIC TLS keylog output to a file",
-            &EnvironmentOptions::has_quic_keylog,
-            kAllowedInEnvironment);
-  AddOption("--quic-keylog-file",
-            "write QUIC TLS keylog output to a file",
-            &EnvironmentOptions::quic_keylog_file,
-            kAllowedInEnvironment);
-  Implies("--quic-keylog-file", "--quic-keylog");
   AddOption("--redirect-warnings",
             "write warnings to file instead of stderr",
             &EnvironmentOptions::redirect_warnings,
