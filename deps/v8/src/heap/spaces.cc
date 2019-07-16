@@ -1468,7 +1468,7 @@ void MemoryChunk::ReleaseMarkingBitmap() {
 void Space::CheckOffsetsAreConsistent() const {
   static_assert(Space::kIdOffset == heap_internals::Space::kIdOffset,
                 "ID offset inconsistent");
-  DCHECK_EQ(Space::kIdOffset, OFFSET_OF(Space, id_));
+//  DCHECK_EQ(Space::kIdOffset, OFFSET_OF(Space, id_));
 }
 
 void Space::AddAllocationObserver(AllocationObserver* observer) {
