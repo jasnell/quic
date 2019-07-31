@@ -309,7 +309,6 @@ class SocketAddress {
 class SocketAddressLRU : public MemoryRetainer {
  public:
  private:
-
 };
 
 class QuicPath {
