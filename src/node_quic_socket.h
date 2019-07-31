@@ -262,7 +262,7 @@ class QuicSocket : public HandleWrap,
   std::unordered_map<const sockaddr*, size_t, SocketAddress::Hash>
     addr_counts_;
 
-  // The validated_addrs vector is used as an LRU cache for
+  // The validated_addrs_ vector is used as an LRU cache for
   // validated addresses only when the VALIDATE_ADDRESS_LRU
   // option is set.
   typedef size_t SocketAddressHash;
