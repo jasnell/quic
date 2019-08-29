@@ -229,8 +229,8 @@ added: REPLACEME
 * `error` {any}
 
 Destroys the `QuicSession` immediately causing the `close` event to be emitted.
-If `error` is not `undefined`, the `error` event will be emitted immediately before
-the `close` event.
+If `error` is not `undefined`, the `error` event will be emitted immediately
+before the `close` event.
 
 Any `QuicStream` instances that are still opened will be abruptly closed.
 
@@ -289,7 +289,7 @@ added: REPLACEME
 
 * Type: {Object}
   * `uni` {number} The maximum number of unidirectional streams.
-  * `bidi` {numbe} The maximum number of bidirectional streams.
+  * `bidi` {number} The maximum number of bidirectional streams.
 
 The highest cumulative number of bidirectional and unidirectional streams
 that can currently be opened. The values are set initially by configuration
