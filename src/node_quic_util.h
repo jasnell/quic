@@ -490,7 +490,10 @@ class Timer {
     timer->env_->CloseHandle(
         reinterpret_cast<uv_handle_t*>(&timer->timer_),
         [&](uv_handle_t* timer) {
-          delete timer;
+          Timer* t = ContainerOf(
+              &Timer::timer_,
+              reinterpret_cast<uv_timer_t*>(timer));
+          delete t;
         });
   }
 
