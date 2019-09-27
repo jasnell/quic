@@ -774,98 +774,67 @@ const char* TLSErrorString(int code) {
   return ERR_error_string(code, nullptr);
 }
 
-void InstallEarlyKeys(
+bool InstallEarlyKeys(
     ngtcp2_conn* conn,
     const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp) {
+    const uint8_t* secret,
+    size_t secretlen) {
   size_t keylen = aead_key_length(&ctx->aead);
   size_t ivlen = packet_protection_ivlen(ctx);
-  CHECK_EQ(
+  SessionKey key;
+  SessionIV iv;
+  SessionKey hp;
+  return
+      DerivePacketProtectionKey(
+          key.data(),
+          iv.data(),
+          hp.data(),
+          ctx,
+          secret,
+          secretlen) &&
       ngtcp2_conn_install_early_key(
           conn,
           key.data(),
           iv.data(),
           hp.data(),
           keylen,
-          ivlen), 0);
+          ivlen) == 0;
 }
 
-void InstallHandshakeRXKeys(
-    ngtcp2_conn* connection,
+bool InstallHandshakeKeys(
+    ngtcp2_conn* conn,
     const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp) {
+    std::unique_ptr<KeyStorage> ks) {
   size_t keylen = aead_key_length(&ctx->aead);
   size_t ivlen = packet_protection_ivlen(ctx);
-  CHECK_EQ(
-     ngtcp2_conn_install_handshake_rx_keys(
-        connection,
-        key.data(),
-        keylen,
-        iv.data(),
-        ivlen,
-        hp.data(),
-        keylen), 0);
+  return ngtcp2_conn_install_handshake_key(
+      conn,
+      ks->rx_key.data(),
+      ks->rx_iv.data(),
+      ks->rx_hp.data(),
+      ks->tx_key.data(),
+      ks->tx_iv.data(),
+      ks->tx_hp.data(),
+      keylen,
+      ivlen) == 0;
 }
 
-void InstallHandshakeTXKeys(
-    ngtcp2_conn* connection,
+bool InstallSessionKeys(
+    ngtcp2_conn* conn,
     const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp) {
+    std::unique_ptr<KeyStorage> ks) {
   size_t keylen = aead_key_length(&ctx->aead);
   size_t ivlen = packet_protection_ivlen(ctx);
-  CHECK_EQ(
-     ngtcp2_conn_install_handshake_tx_keys(
-        connection,
-        key.data(),
-        keylen,
-        iv.data(),
-        ivlen,
-        hp.data(),
-        keylen), 0);
-}
-
-void InstallRXKeys(
-    ngtcp2_conn* connection,
-    const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp) {
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-  CHECK_EQ(
-     ngtcp2_conn_install_rx_keys(
-        connection,
-        key.data(),
-        keylen,
-        iv.data(),
-        ivlen,
-        hp.data(),
-        keylen), 0);
-}
-
-void InstallTXKeys(
-    ngtcp2_conn* connection,
-    const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp) {
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-  CHECK_EQ(
-     ngtcp2_conn_install_tx_keys(
-        connection,
-        key.data(),
-        keylen,
-        iv.data(),
-        ivlen,
-        hp.data(),
-        keylen), 0);
+  return ngtcp2_conn_install_key(
+      conn,
+      ks->rx_key.data(),
+      ks->rx_iv.data(),
+      ks->rx_hp.data(),
+      ks->tx_key.data(),
+      ks->tx_iv.data(),
+      ks->tx_hp.data(),
+      keylen,
+      ivlen) == 0;
 }
 
 // MessageCB provides a hook into the TLS handshake dataflow. Currently, it

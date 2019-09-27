@@ -52,6 +52,21 @@ using TokenSecret = std::array<uint8_t, NGTCP2_CRYPTO_TOKEN_SECRETLEN>;
 using TokenKey = std::array<uint8_t, NGTCP2_CRYPTO_TOKEN_KEYLEN>;
 using TokenIV = std::array<uint8_t, NGTCP2_CRYPTO_TOKEN_IVLEN>;
 
+// Temporary Key Storage. This is only necessary because ngtcp2 assumes
+// we have both RX and TX keys at the same time when we install them,
+// which will be true once we're able to adopt a version of openssl that
+// implements the BoringSSL QUIC APIs. However, because we are using the
+// Key callback, we only get one key at a time and have to temporarily
+// store it until we've got both and we're ready to install.
+struct KeyStorage {
+  SessionKey rx_key;
+  SessionIV rx_iv;
+  SessionKey rx_hp;
+  SessionKey tx_key;
+  SessionIV tx_iv;
+  SessionKey tx_hp;
+};
+
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 enum ngtcp2_crypto_side {
   /**
@@ -140,44 +155,21 @@ bool UpdateAndInstallKey(
 void ClearTLSError();
 
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
-void InstallEarlyKeys(
-    ngtcp2_conn* connection,
+bool InstallEarlyKeys(
+    ngtcp2_conn* conn,
     const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp);
+    const uint8_t* secret,
+    size_t secretlen);
 
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-void InstallHandshakeRXKeys(
-    ngtcp2_conn* connection,
+bool InstallHandshakeKeys(
+    ngtcp2_conn* conn,
     const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp);
+    std::unique_ptr<KeyStorage> ks);
 
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-void InstallHandshakeTXKeys(
-    ngtcp2_conn* connection,
+bool InstallSessionKeys(
+    ngtcp2_conn* conn,
     const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp);
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-void InstallRXKeys(
-    ngtcp2_conn* connection,
-    const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp);
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-void InstallTXKeys(
-    ngtcp2_conn* connection,
-    const ngtcp2_crypto_ctx* ctx,
-    const SessionKey& key,
-    const SessionIV& iv,
-    const SessionKey& hp);
+    std::unique_ptr<KeyStorage> ks);
 
 // MessageCB provides a hook into the TLS handshake dataflow. Currently, it
 // is used to capture TLS alert codes (errors) and to collect the TLS handshake

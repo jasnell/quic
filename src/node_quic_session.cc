@@ -818,79 +818,140 @@ void QuicSession::OnIdleTimeout() {
 // since it's moving to a model where it assumes both rx and tx keys are
 // available at the same time.
 bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
-  typedef void (*install_fn)(ngtcp2_conn* conn,
-                             const ngtcp2_crypto_ctx* ctx,
-                             const SessionKey& key,
-                             const SessionIV& iv,
-                             const SessionKey& hp);
-  std::vector<uint8_t>* client_secret;
-  std::vector<uint8_t>* server_secret;
-  install_fn install_server_handshake_key;
-  install_fn install_client_handshake_key;
-  install_fn install_server_key;
-  install_fn install_client_key;
-  SessionKey key;
-  SessionIV iv;
-  SessionKey hp;
-
   const ngtcp2_crypto_ctx* ctx = GetCryptoContext(Connection(), ssl());
+  if (name == SSL_KEY_CLIENT_EARLY_TRAFFIC)
+    return InstallEarlyKeys(Connection(), ctx, secret, secretlen);
+
+  SessionKey* key;
+  SessionIV* iv;
+  SessionKey* hp;
+
+  // Most of this switch statement is just deciding where the key
+  // material is going to be stored, then check to see if we've enough
+  // information to continue with the install operation
 
   switch (Side()) {
-    case NGTCP2_CRYPTO_SIDE_SERVER:
-      client_secret = &rx_secret_;
-      server_secret = &tx_secret_;
-      install_server_handshake_key = InstallHandshakeTXKeys;
-      install_client_handshake_key = InstallHandshakeRXKeys;
-      install_server_key = InstallTXKeys;
-      install_client_key = InstallRXKeys;
+    case NGTCP2_CRYPTO_SIDE_SERVER: {
+      switch (name) {
+        case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_HANDSHAKE_RX);
+          if (!key_storage_handshake_)
+            key_storage_handshake_.reset(new KeyStorage());
+          key = &key_storage_handshake_->rx_key;
+          iv = &key_storage_handshake_->rx_iv;
+          hp = &key_storage_handshake_->rx_hp;
+          break;
+        case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_SESSION_RX);
+          rx_secret_.assign(secret, secret + secretlen);
+          if (!key_storage_session_)
+            key_storage_session_.reset(new KeyStorage());
+          key = &key_storage_session_->rx_key;
+          iv = &key_storage_session_->rx_iv;
+          hp = &key_storage_session_->rx_hp;
+          SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
+          break;
+        case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_HANDSHAKE_TX);
+          if (!key_storage_handshake_)
+            key_storage_handshake_.reset(new KeyStorage());
+          key = &key_storage_handshake_->tx_key;
+          iv = &key_storage_handshake_->tx_iv;
+          hp = &key_storage_handshake_->tx_hp;
+          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
+          break;
+        case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_SESSION_TX);
+          tx_secret_.assign(secret, secret + secretlen);
+          if (!key_storage_session_)
+            key_storage_session_.reset(new KeyStorage());
+          key = &key_storage_session_->tx_key;
+          iv = &key_storage_session_->tx_iv;
+          hp = &key_storage_session_->tx_hp;
+          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
+        break;
+      }
       break;
-    case NGTCP2_CRYPTO_SIDE_CLIENT:
-      client_secret = &tx_secret_;
-      server_secret = &rx_secret_;
-      install_server_handshake_key = InstallHandshakeRXKeys;
-      install_client_handshake_key = InstallHandshakeTXKeys;
-      install_server_key = InstallRXKeys;
-      install_client_key = InstallTXKeys;
+    }
+    case NGTCP2_CRYPTO_SIDE_CLIENT: {
+      switch (name) {
+        case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_HANDSHAKE_TX);
+          if (!key_storage_handshake_)
+            key_storage_handshake_.reset(new KeyStorage());
+          key = &key_storage_handshake_->tx_key;
+          iv = &key_storage_handshake_->tx_iv;
+          hp = &key_storage_handshake_->tx_hp;
+          break;
+        case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_SESSION_TX);
+          tx_secret_.assign(secret, secret + secretlen);
+          if (!key_storage_session_)
+            key_storage_session_.reset(new KeyStorage());
+          key = &key_storage_session_->tx_key;
+          iv = &key_storage_session_->tx_iv;
+          hp = &key_storage_session_->tx_hp;
+          SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
+          break;
+        case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_HANDSHAKE_RX);
+          if (!key_storage_handshake_)
+            key_storage_handshake_.reset(new KeyStorage());
+          key = &key_storage_handshake_->rx_key;
+          iv = &key_storage_handshake_->rx_iv;
+          hp = &key_storage_handshake_->rx_hp;
+          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
+          break;
+        case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
+          SetFlag(QUICSESSION_FLAG_SESSION_RX);
+          rx_secret_.assign(secret, secret + secretlen);
+          if (!key_storage_session_)
+            key_storage_session_.reset(new KeyStorage());
+          key = &key_storage_session_->rx_key;
+          iv = &key_storage_session_->rx_iv;
+          hp = &key_storage_session_->rx_hp;
+          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
+        break;
+      }
       break;
+    }
     default:
       UNREACHABLE();
   }
 
+  DCHECK_NOT_NULL(key);
+  DCHECK_NOT_NULL(iv);
+  DCHECK_NOT_NULL(hp);
+
   if (!DerivePacketProtectionKey(
-          key.data(),
-          iv.data(),
-          hp.data(),
+          key->data(),
+          iv->data(),
+          hp->data(),
           ctx,
           secret,
           secretlen)) {
     return false;
   }
 
-  switch (name) {
-    case SSL_KEY_CLIENT_EARLY_TRAFFIC:
-      InstallEarlyKeys(Connection(), ctx, key, iv, hp);
-      break;
-    case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
-      install_client_handshake_key(Connection(), ctx, key, iv, hp);
-      SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
-      break;
-    case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
-      client_secret->assign(secret, secret + secretlen);
-      install_client_key(Connection(), ctx, key, iv, hp);
-      SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
-      break;
-    case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
-      install_server_handshake_key(Connection(), ctx, key, iv, hp);
-      SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
-      break;
-    case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
-      server_secret->assign(secret, secret + secretlen);
-      install_server_key(Connection(), ctx, key, iv, hp);
-      SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
-    break;
+  if (IsFlagSet(QUICSESSION_FLAG_HANDSHAKE_KEYS)) {
+    SetFlag(QUICSESSION_FLAG_SESSION_KEYS, false);
+    if (!InstallHandshakeKeys(
+            Connection(),
+            ctx,
+            std::move(key_storage_handshake_)))
+      return false;
   }
 
-  return true;
+  if (IsFlagSet(QUICSESSION_FLAG_SESSION_KEYS)) {
+    SetFlag(QUICSESSION_FLAG_SESSION_KEYS, false);
+    if (!InstallSessionKeys(
+            Connection(),
+            ctx,
+            std::move(key_storage_session_)))
+      return false;
+   }
+
+   return true;
 }
 
 

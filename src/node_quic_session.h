@@ -770,7 +770,18 @@ class QuicSession : public AsyncWrap,
 
     // Set if the QuicSession is in the middle of a silent close
     // (that is, a CONNECTION_CLOSE should not be sent)
-    QUICSESSION_FLAG_SILENT_CLOSE = 0x200
+    QUICSESSION_FLAG_SILENT_CLOSE = 0x200,
+
+    QUICSESSION_FLAG_HANDSHAKE_RX = 0x400,
+    QUICSESSION_FLAG_HANDSHAKE_TX = 0x800,
+    QUICSESSION_FLAG_HANDSHAKE_KEYS =
+        QUICSESSION_FLAG_HANDSHAKE_RX |
+        QUICSESSION_FLAG_HANDSHAKE_TX,
+    QUICSESSION_FLAG_SESSION_RX = 0x1000,
+    QUICSESSION_FLAG_SESSION_TX = 0x2000,
+    QUICSESSION_FLAG_SESSION_KEYS =
+        QUICSESSION_FLAG_SESSION_RX |
+        QUICSESSION_FLAG_SESSION_TX
   };
 
   void SetFlag(QuicSessionFlags flag, bool on = true) {
@@ -830,6 +841,9 @@ class QuicSession : public AsyncWrap,
   ngtcp2_crypto_side side_;
   BaseObjectWeakPtr<QuicSocket> socket_;
   std::string alpn_;
+
+  std::unique_ptr<KeyStorage> key_storage_handshake_;
+  std::unique_ptr<KeyStorage> key_storage_session_;
 
   ngtcp2_crypto_level rx_crypto_level_ = NGTCP2_CRYPTO_LEVEL_INITIAL;
   ngtcp2_crypto_level tx_crypto_level_ = NGTCP2_CRYPTO_LEVEL_INITIAL;
