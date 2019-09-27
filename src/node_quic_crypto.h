@@ -133,6 +133,7 @@ bool DerivePacketProtectionKey(
 // once we move to ngtcp2_crypto
 bool DeriveAndInstallInitialKey(
   ngtcp2_conn* conn,
+  const ngtcp2_crypto_ctx* ctx,
   const ngtcp2_cid* dcid,
   ngtcp2_crypto_side side);
 

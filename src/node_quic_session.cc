@@ -453,7 +453,7 @@ void QuicSession::Destroy() {
       !IsInClosingPeriod() &&
       !IsInDrainingPeriod()) {
     Debug(this, "Making attempt to send a connection close");
-    SetLastError(QUIC_ERROR_SESSION, NGTCP2_NO_ERROR);
+    SetLastError();
     SendConnectionClose();
   }
 
@@ -678,9 +678,9 @@ bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
   if (name == SSL_KEY_CLIENT_EARLY_TRAFFIC)
     return InstallEarlyKeys(Connection(), ctx, secret, secretlen);
 
-  SessionKey* key;
-  SessionIV* iv;
-  SessionKey* hp;
+  SessionKey* key = nullptr;
+  SessionIV* iv = nullptr;
+  SessionKey* hp = nullptr;
 
   // Most of this switch statement is just deciding where the key
   // material is going to be stored, then check to see if we've enough
@@ -790,7 +790,7 @@ bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
   }
 
   if (IsFlagSet(QUICSESSION_FLAG_HANDSHAKE_KEYS)) {
-    SetFlag(QUICSESSION_FLAG_SESSION_KEYS, false);
+    SetFlag(QUICSESSION_FLAG_HANDSHAKE_KEYS, false);
     if (!InstallHandshakeKeys(
             Connection(),
             ctx,
@@ -1009,7 +1009,7 @@ bool QuicSession::Receive(
     // been sent to the peer. Let's attempt to send one.
     if (!IsInClosingPeriod() && !IsInDrainingPeriod()) {
       Debug(this, "Attempting to send connection close");
-      SetLastError(QUIC_ERROR_SESSION, NGTCP2_NO_ERROR);
+      SetLastError();
       SendConnectionClose();
     }
     return true;
@@ -1044,8 +1044,10 @@ int QuicSession::ReceiveCryptoData(
     uint64_t offset,
     const uint8_t* data,
     size_t datalen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
+  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED)) {
+    Debug(this, "Destroyed session cannot receive crypto data");
     return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
 
   Debug(this, "Receiving %d bytes of crypto data.", datalen);
 
@@ -1072,6 +1074,7 @@ bool QuicSession::ReceiveClientInitial(const ngtcp2_cid* dcid) {
   Debug(this, "Receiving client initial parameters.");
   return DeriveAndInstallInitialKey(
     Connection(),
+    GetInitialCryptoContext(Connection()),
     dcid,
     NGTCP2_CRYPTO_SIDE_SERVER) &&
     initial_connection_close_ == NGTCP2_NO_ERROR;
@@ -1324,9 +1327,6 @@ bool QuicSession::SendStreamData(QuicStream* stream) {
         case NGTCP2_ERR_STREAM_DATA_BLOCKED:
           Debug(stream, "Stream data blocked");
           return true;
-        case NGTCP2_ERR_EARLY_DATA_REJECTED:
-          Debug(stream, "Early data rejected");
-          return true;
         case NGTCP2_ERR_STREAM_SHUT_WR:
           Debug(stream, "Stream writable side is closed");
           return true;
@@ -1418,8 +1418,10 @@ void QuicSession::SendPendingData() {
 
   // If there's anything currently in the sendbuf_, send it before
   // serializing anything else.
-  if (!SendPacket("pending session data"))
+  if (!SendPacket("pending session data")) {
+    Debug(this, "Error sending pending packet");
     return HandleError();
+  }
 
   // Try purging any pending stream data
   // TODO(@jasnell): Right now this iterates through the streams
@@ -1427,8 +1429,10 @@ void QuicSession::SendPendingData() {
   // a prioritization scheme to allow higher priority streams to
   // be serialized first.
   for (const auto& stream : streams_) {
-    if (!SendStreamData(stream.second.get()))
+    if (!SendStreamData(stream.second.get())) {
+      Debug(this, "Error sending stream data");
       return HandleError();
+    }
 
     // Check to make sure QuicSession state did not change in this
     // iteration
@@ -1440,8 +1444,10 @@ void QuicSession::SendPendingData() {
   }
 
   // Otherwise, serialize and send any packets waiting in the queue.
-  if (!WritePackets("pending session data - write packets"))
+  if (!WritePackets("pending session data - write packets")) {
+    Debug(this, "Error writing pending packets");
     HandleError();
+  }
 }
 
 // Notifies the ngtcp2_conn that the TLS handshake is completed.
@@ -1635,7 +1641,6 @@ bool QuicSession::TLSHandshake() {
 
   ClearTLSError();
 
-  int err;
   uint64_t now = uv_hrtime();
   if (!IsFlagSet(QUICSESSION_FLAG_INITIAL)) {
     Debug(this, "TLS handshake starting");
@@ -1654,8 +1659,19 @@ bool QuicSession::TLSHandshake() {
   }
   session_stats_.handshake_continue_at = now;
 
-  if (DoTLSHandshake(ssl()) <= 0 || !TLSHandshake_Complete()) {
-    Debug(this, "TLS handshake is not yet completed.");
+  int ret = DoTLSHandshake(ssl());
+  if (ret < 0) {
+    Debug(this, "TLS handshake failed with error code %d", ret);
+    return false;
+  }
+
+  if (ret == 0) {
+    Debug(this, "TLS handshake is not yet completed");
+    return true;
+  }
+
+  if (!TLSHandshake_Complete()) {
+    Debug(this, "TLS handshake failed after completion");
     return false;
   }
 
@@ -1674,7 +1690,7 @@ bool QuicSession::TLSRead() {
 
 void QuicSession::UpdateIdleTimer() {
   CHECK_NOT_NULL(idle_);
-  uint64_t timeout = ngtcp2_conn_get_idle_timeout(Connection()) / 1000000UL;
+  uint64_t timeout = ngtcp2_conn_get_idle_expiry(Connection()) / 1000000UL;
   Debug(this, "Updating idle timeout to %" PRIu64, timeout);
   idle_->Update(timeout);
 }
@@ -1715,8 +1731,9 @@ bool QuicSession::WritePackets(const char* diagnostic_label) {
 
   // During the closing period, we are only permitted to send
   // CONNECTION_CLOSE frames.
-  if (IsInClosingPeriod())
+  if (IsInClosingPeriod()) {
     return SendConnectionClose();
+  }
 
   // Otherwise, serialize and send pending frames
   QuicPathStorage path;
@@ -2380,8 +2397,6 @@ BaseObjectPtr<QuicSession> QuicClientSession::New(
           options);
 
   session->AddToSocket(socket);
-  // This should never fail at this initial step.
-  CHECK(session->TLSHandshake());
   return session;
 }
 
@@ -2761,6 +2776,7 @@ bool QuicClientSession::SetupInitialCryptoContext() {
   Debug(this, "Setting up initial crypto context");
   return DeriveAndInstallInitialKey(
       Connection(),
+      GetInitialCryptoContext(Connection()),
       ngtcp2_conn_get_dcid(Connection()),
       NGTCP2_CRYPTO_SIDE_CLIENT);
 }
@@ -2837,7 +2853,11 @@ int QuicSession::OnClientInitial(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->TLSHandshake() ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!session->TLSHandshake()) {
+    Debug(session, "Initializing initial client handshake failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // Called by ngtcp2 for a new server connection when the initial
@@ -2848,8 +2868,11 @@ int QuicSession::OnReceiveClientInitial(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->ReceiveClientInitial(dcid) ?
-      0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!session->ReceiveClientInitial(dcid)) {
+    Debug(session, "Receiving initial client handshake failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // Called by ngtcp2 for both client and server connections when
@@ -2876,7 +2899,11 @@ int QuicSession::OnReceiveRetry(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->ReceiveRetry() ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!session->ReceiveRetry()) {
+    Debug(session, "Receiving retry token failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // Called by ngtcp2 for both client and server connections
@@ -2944,16 +2971,21 @@ int QuicSession::OnEncrypt(
     size_t adlen,
     void* user_data) {
 
-  return Encrypt(
-      dest,
-      aead,
-      plaintext,
-      plaintextlen,
-      key,
-      nonce,
-      noncelen,
-      ad,
-      adlen) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!Encrypt(
+          dest,
+          aead,
+          plaintext,
+          plaintextlen,
+          key,
+          nonce,
+          noncelen,
+          ad,
+          adlen)) {
+    QuicSession* session = static_cast<QuicSession*>(user_data);
+    Debug(session, "Encrypting data failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // Called by ngtcp2 when encrypted non-TLS handshake data
@@ -2970,16 +3002,21 @@ int QuicSession::OnDecrypt(
     const uint8_t* ad,
     size_t adlen,
     void* user_data) {
-  return Decrypt(
-      dest,
-      aead,
-      ciphertext,
-      ciphertextlen,
-      key,
-      nonce,
-      noncelen,
-      ad,
-      adlen) ? 0 : NGTCP2_ERR_TLS_DECRYPT;
+  if (!Decrypt(
+          dest,
+          aead,
+          ciphertext,
+          ciphertextlen,
+          key,
+          nonce,
+          noncelen,
+          ad,
+          adlen)) {
+    QuicSession* session = static_cast<QuicSession*>(user_data);
+    Debug(session, "Decrypting data failed");
+    return NGTCP2_ERR_TLS_DECRYPT;
+  }
+  return 0;
 }
 
 int QuicSession::OnHPMask(
@@ -2989,7 +3026,12 @@ int QuicSession::OnHPMask(
     const uint8_t* key,
     const uint8_t* sample,
     void* user_data) {
-  return HP_Mask(dest, hp, key, sample) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!HP_Mask(dest, hp, key, sample)) {
+    QuicSession* session = static_cast<QuicSession*>(user_data);
+    Debug(session, "Generating HP mask failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // Called by ngtcp2 when a chunk of stream data has been received.
@@ -3061,8 +3103,11 @@ int QuicSession::OnSelectPreferredAddress(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->SelectPreferredAddress(dest, paddr) ?
-      0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!session->SelectPreferredAddress(dest, paddr)) {
+    Debug(session, "Selecting preferred address failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // Called by ngtcp2 when a stream has been closed for any reason.
@@ -3122,7 +3167,11 @@ int QuicSession::OnUpdateKey(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->UpdateKey() ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  if (!session->UpdateKey()) {
+    Debug(session, "Updating the key failed");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+  return 0;
 }
 
 // When a connection is closed, ngtcp2 will call this multiple
@@ -3510,7 +3559,6 @@ void NewQuicClientSession(const FunctionCallbackInfo<Value>& args) {
           options);
 
   session->SendPendingData();
-
   args.GetReturnValue().Set(session->object());
 }
 

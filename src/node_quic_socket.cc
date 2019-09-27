@@ -658,7 +658,9 @@ BaseObjectPtr<QuicSession> QuicSocket::AcceptInitialPacket(
   switch (QuicServerSession::Accept(&hd, data, nread)) {
     case QuicServerSession::InitialPacketResult::PACKET_VERSION:
       SendVersionNegotiation(version, dcid, scid, addr);
-      // Fall-through to ignore packet
+      // Return explicitly here rather than falling-through to
+      // avoid compiler warning
+      return {};
     case QuicServerSession::InitialPacketResult::PACKET_IGNORE:
       return {};
     case QuicServerSession::InitialPacketResult::PACKET_OK:

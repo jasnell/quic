@@ -218,11 +218,12 @@ const ngtcp2_crypto_ctx* GetCryptoContext(ngtcp2_conn* conn, SSL* ssl) {
   return ctx;
 }
 
-const ngtcp2_crypto_ctx* GetInitialCryptoContext(ngtcp2_conn* conn {
+const ngtcp2_crypto_ctx* GetInitialCryptoContext(ngtcp2_conn* conn) {
   const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_initial_crypto_ctx(conn);
   // ctx will always be non-null, so check members
   if (ctx->aead.native_handle == nullptr) {
     ngtcp2_crypto_ctx context;
+    ngtcp2_crypto_ctx_initial(&context);
     ngtcp2_conn_set_initial_crypto_ctx(conn, &context);
     ctx = ngtcp2_conn_get_initial_crypto_ctx(conn);
   }
@@ -324,32 +325,62 @@ bool Encrypt(
   size_t taglen = aead_tag_length(aead);
   const EVP_CIPHER* cipher =
       static_cast<const EVP_CIPHER*>(aead->native_handle);
-  DCHECK_NOT_NULL(cipher);
+  CHECK_NOT_NULL(cipher);
+
 
   CipherCtxPointer actx(EVP_CIPHER_CTX_new());
   CHECK(actx);
 
-  size_t outlen = 0;
   int len;
 
-  if (EVP_EncryptInit_ex(actx.get(), cipher, nullptr, nullptr, nullptr) != 1 ||
-      EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_SET_IVLEN,
-                          noncelen, nullptr) != 1) ||
-      EVP_EncryptInit_ex(actx.get(), nullptr, nullptr, key, nonce) != 1 ||
-      EVP_EncryptUpdate(actx.get(), nullptr, &len, ad, adlen) != 1 ||
-      EVP_EncryptUpdate(actx.get(), dest, &len, plaintext, plaintextlen) != 1) {
+  if (EVP_EncryptInit_ex(
+          actx.get(),
+          cipher,
+          nullptr,
+          nullptr,
+          nullptr) != 1 ||
+      EVP_CIPHER_CTX_ctrl(
+          actx.get(),
+          EVP_CTRL_AEAD_SET_IVLEN,
+          noncelen,
+          nullptr) != 1 ||
+      EVP_EncryptInit_ex(
+          actx.get(),
+          nullptr,
+          nullptr,
+          key,
+          nonce) != 1 ||
+      EVP_EncryptUpdate(
+          actx.get(),
+          nullptr,
+          &len,
+          ad,
+          adlen) != 1 ||
+      EVP_EncryptUpdate(
+          actx.get(),
+          dest,
+          &len,
+          plaintext,
+          plaintextlen) != 1) {
     return false;
   }
 
-  outlen = len;
+  dest += len;
 
-  if (EVP_EncryptFinal_ex(actx.get(), dest + outlen, &len) != 1)
+  if (EVP_EncryptFinal_ex(
+          actx.get(),
+          dest,
+          &len) != 1) {
     return false;
+  }
 
-  outlen += len;
+  dest += len;
 
-  if (EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_GET_TAG, taglen,
-                          dest + outlen) != 1) {
+  if (EVP_CIPHER_CTX_ctrl(
+          actx.get(),
+          EVP_CTRL_AEAD_GET_TAG,
+          taglen,
+          dest) != 1) {
     return false;
   }
 
@@ -535,6 +566,11 @@ bool DerivePacketProtectionKey(
   static const uint8_t KEY_LABEL[] = "quic key";
   static const uint8_t IV_LABEL[] = "quic iv";
   static const uint8_t HP_KEY_LABEL[] = "quic hp";
+
+  CHECK_NOT_NULL(ctx);
+  CHECK_NOT_NULL(ctx->aead.native_handle);
+  CHECK_NOT_NULL(ctx->md.native_handle);
+
   size_t keylen = aead_key_length(&ctx->aead);
   size_t ivlen = packet_protection_ivlen(ctx);
 
@@ -569,9 +605,10 @@ bool DerivePacketProtectionKey(
 // TODO(@jasnell): Replace with ngtcp2_crypto_derive_and_install_initial_key
 // once we move to ngtcp2_crypto
 bool DeriveAndInstallInitialKey(
-  ngtcp2_conn* conn,
-  const ngtcp2_cid* dcid,
-  ngtcp2_crypto_side side) {
+    ngtcp2_conn* conn,
+    const ngtcp2_crypto_ctx* ctx,
+    const ngtcp2_cid* dcid,
+    ngtcp2_crypto_side side) {
   InitialSecret rx_secret;
   InitialSecret tx_secret;
   InitialKey rx_key;
@@ -581,8 +618,7 @@ bool DeriveAndInstallInitialKey(
   InitialKey rx_hp;
   InitialKey tx_hp;
 
-  ngtcp2_crypto_ctx ctx;
-  ngtcp2_crypto_ctx_initial(&ctx);
+  CHECK_NOT_NULL(ctx);
 
   return
       DeriveInitialSecrets(
@@ -595,14 +631,14 @@ bool DeriveAndInstallInitialKey(
           rx_key.data(),
           rx_iv.data(),
           rx_hp.data(),
-          &ctx,
+          ctx,
           rx_secret.data(),
           NGTCP2_CRYPTO_INITIAL_SECRETLEN) &&
       DerivePacketProtectionKey(
           tx_key.data(),
           tx_iv.data(),
           tx_hp.data(),
-          &ctx,
+          ctx,
           tx_secret.data(),
           NGTCP2_CRYPTO_INITIAL_SECRETLEN) &&
       ngtcp2_conn_install_initial_key(
@@ -1254,7 +1290,6 @@ bool GenerateRetryToken(
   ngtcp2_crypto_ctx_initial(&ctx);
 
   const size_t addrlen = SocketAddress::GetAddressLen(addr);
-  size_t keylen = aead_key_length(&ctx.aead);
   size_t ivlen = packet_protection_ivlen(&ctx);
 
   uint64_t now = uv_hrtime();
@@ -1312,7 +1347,6 @@ bool InvalidRetryToken(
   ngtcp2_crypto_ctx ctx;
   ngtcp2_crypto_ctx_initial(&ctx);
 
-  size_t keylen = aead_key_length(&ctx.aead);
   size_t ivlen = packet_protection_ivlen(&ctx);
   const size_t addrlen = SocketAddress::GetAddressLen(addr);
 

@@ -696,7 +696,7 @@ class QuicSession : public AsyncWrap,
   }
 
   bool IsFlagSet(QuicSessionFlags flag) const {
-    return flags_ & flag;
+    return (flags_ & flag) == flag;
   }
 
   void SetOption(uint32_t option, bool on = true) {
