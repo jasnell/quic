@@ -852,7 +852,6 @@ class QuicSession : public AsyncWrap,
   TimerPointer idle_;
   TimerPointer retransmit_;
 
-  CryptoContext crypto_ctx_{};
   std::vector<uint8_t> tx_secret_;
   std::vector<uint8_t> rx_secret_;
   ngtcp2_cid scid_;

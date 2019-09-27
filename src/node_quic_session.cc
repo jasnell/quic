@@ -495,7 +495,7 @@ ssize_t QuicSession::DoDecrypt(
   ssize_t nwrite = Decrypt(
       dest, destlen,
       ciphertext, ciphertextlen,
-      &crypto_ctx_,
+      ngtcp2_conn_get_crypto_ctx(Connection()),
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -520,7 +520,7 @@ ssize_t QuicSession::DoEncrypt(
   ssize_t nwrite = Encrypt(
       dest, destlen,
       plaintext, plaintextlen,
-      &crypto_ctx_,
+      ngtcp2_conn_get_crypto_ctx(Connection()),
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -540,7 +540,7 @@ ssize_t QuicSession::DoHPMask(
     return NGTCP2_ERR_CALLBACK_FAILURE;
   ssize_t nwrite = HP_Mask(
       dest, destlen,
-      &crypto_ctx_,
+      ngtcp2_conn_get_crypto_ctx(Connection()),
       key, keylen,
       sample, samplelen);
   return nwrite >= 0 ?
@@ -561,12 +561,11 @@ ssize_t QuicSession::DoHSDecrypt(
     size_t adlen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
-  CryptoContext ctx;
-  SetupInitialCryptoContext(&ctx);
+  const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
   ssize_t nwrite = Decrypt(
       dest, destlen,
       ciphertext, ciphertextlen,
-      &ctx,
+      ctx,
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -588,12 +587,11 @@ ssize_t QuicSession::DoHSEncrypt(
     size_t adlen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
-  CryptoContext ctx;
-  SetupInitialCryptoContext(&ctx);
+  const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
   ssize_t nwrite = Encrypt(
       dest, destlen,
       plaintext, plaintextlen,
-      &ctx,
+      ctx,
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -611,11 +609,10 @@ ssize_t QuicSession::DoInHPMask(
     size_t samplelen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
-  CryptoContext ctx;
-  SetupInitialCryptoContext(&ctx);
+  const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
   ssize_t nwrite = HP_Mask(
       dest, destlen,
-      &ctx,
+      ctx,
       key, keylen,
       sample, samplelen);
   return nwrite >= 0 ?
@@ -834,9 +831,10 @@ bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
   SessionIV iv;
   SessionKey hp;
 
-  SetupCryptoContext(&crypto_ctx_, ssl());
-  size_t keylen = aead_key_length(&crypto_ctx_);
-  size_t ivlen = packet_protection_ivlen(&crypto_ctx_);
+  const ngtcp2_crypto_ctx* ctx = GetCryptoContext(Connection(), ssl());
+
+  size_t keylen = aead_key_length(ctx);
+  size_t ivlen = packet_protection_ivlen(ctx);
 
   switch (Side()) {
     case NGTCP2_CRYPTO_SIDE_SERVER:
@@ -863,12 +861,11 @@ bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
           key.data(),
           iv.data(),
           hp.data(),
-          &crypto_ctx_,
+          ctx,
           secret,
           secretlen)) {
     return false;
   }
-  ngtcp2_conn_set_aead_overhead(Connection(), aead_tag_length(&crypto_ctx_));
 
   switch (name) {
     case SSL_KEY_CLIENT_EARLY_TRAFFIC:
@@ -1879,8 +1876,7 @@ bool QuicSession::UpdateKey() {
       Connection(),
       &rx_secret_,
       &tx_secret_,
-      rx_secret_.size(),
-      &crypto_ctx_);
+      rx_secret_.size());
 }
 
 void QuicSession::MemoryInfo(MemoryTracker* tracker) const {

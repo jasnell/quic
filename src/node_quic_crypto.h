@@ -52,12 +52,6 @@ using TokenSecret = std::array<uint8_t, NGTCP2_CRYPTO_TOKEN_SECRETLEN>;
 using TokenKey = std::array<uint8_t, NGTCP2_CRYPTO_TOKEN_KEYLEN>;
 using TokenIV = std::array<uint8_t, NGTCP2_CRYPTO_TOKEN_IVLEN>;
 
-struct CryptoContext {
-  const EVP_CIPHER* aead;
-  const EVP_CIPHER* hp;
-  const EVP_MD* md;
-};
-
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 enum ngtcp2_crypto_side {
   /**
@@ -74,25 +68,20 @@ enum ngtcp2_crypto_side {
 
 BIO_METHOD* CreateBIOMethod();
 
+const ngtcp2_crypto_ctx* GetCryptoContext(ngtcp2_conn* conn, SSL* ssl);
+const ngtcp2_crypto_ctx* GetInitialCryptoContext(ngtcp2_conn* conn);
+
 // TODO(@jasnell): Replace with ngtcp2_crypto_aead_keylen once
 // we move to ngtcp2_crypto.h
-size_t aead_key_length(const CryptoContext* ctx);
+size_t aead_key_length(const ngtcp2_crypto_ctx* ctx);
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_packet_protection_ivlen
 // once we move to ngtcp2_crypto.h
-size_t packet_protection_ivlen(const CryptoContext* ctx);
+size_t packet_protection_ivlen(const ngtcp2_crypto_ctx* ctx);
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_aead_taglen once
 // we move to ngtcp2_crypto.h
-size_t aead_tag_length(const CryptoContext* ctx);
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_ctx_initial once
-// we move to ngtcp2_crypto.h
-void SetupInitialCryptoContext(CryptoContext* context);
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_ctx_tls once
-// we move to ngtcp2_crypto
-void SetupCryptoContext(CryptoContext* ctx, SSL* ssl);
+size_t aead_tag_length(const ngtcp2_crypto_ctx* ctx);
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_encrypt once
 // we move to ngtcp2_crypto
@@ -101,7 +90,7 @@ ssize_t Encrypt(
     size_t destlen,
     const uint8_t* plaintext,
     size_t plaintextlen,
-    const CryptoContext* ctx,
+    const ngtcp2_crypto_ctx* ctx,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* nonce,
@@ -116,7 +105,7 @@ ssize_t Decrypt(
     size_t destlen,
     const uint8_t* ciphertext,
     size_t ciphertextlen,
-    const CryptoContext* ctx,
+    const ngtcp2_crypto_ctx* ctx,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* nonce,
@@ -129,7 +118,7 @@ ssize_t Decrypt(
 ssize_t HP_Mask(
     uint8_t* dest,
     size_t destlen,
-    const CryptoContext* ctx,
+    const ngtcp2_crypto_ctx* ctx,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* sample,
@@ -141,7 +130,7 @@ bool DerivePacketProtectionKey(
     uint8_t* key,
     uint8_t* iv,
     uint8_t* hp_key,
-    const CryptoContext* ctx,
+    const ngtcp2_crypto_ctx* ctx,
     const uint8_t* secret,
     size_t secretlen);
 
@@ -158,8 +147,7 @@ bool UpdateAndInstallKey(
     ngtcp2_conn* conn,
     std::vector<uint8_t>* current_rx_secret,
     std::vector<uint8_t>* current_tx_secret,
-    size_t secretlen,
-    const CryptoContext* ctx);
+    size_t secretlen);
 
 void ClearTLSError();
 
