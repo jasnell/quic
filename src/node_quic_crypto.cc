@@ -311,14 +311,12 @@ bool HKDF_Expand_Label(
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_encrypt once
 // we move to ngtcp2_crypto
-ssize_t Encrypt(
+bool Encrypt(
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* plaintext,
     size_t plaintextlen,
-    const ngtcp2_crypto_aead* aead,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
@@ -327,9 +325,6 @@ ssize_t Encrypt(
   const EVP_CIPHER* cipher =
       static_cast<const EVP_CIPHER*>(aead->native_handle);
   DCHECK_NOT_NULL(cipher);
-
-  if (destlen < plaintextlen + taglen)
-    return -1;
 
   CipherCtxPointer actx(EVP_CIPHER_CTX_new());
   CHECK(actx);
@@ -337,52 +332,38 @@ ssize_t Encrypt(
   size_t outlen = 0;
   int len;
 
-  if (EVP_EncryptInit_ex(actx.get(), cipher, nullptr, nullptr, nullptr) != 1)
-    return NGTCP2_ERR_CRYPTO;
-
-  if (EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_SET_IVLEN,
-                          noncelen, nullptr) != 1) {
-    return NGTCP2_ERR_CRYPTO;
+  if (EVP_EncryptInit_ex(actx.get(), cipher, nullptr, nullptr, nullptr) != 1 ||
+      EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_SET_IVLEN,
+                          noncelen, nullptr) != 1) ||
+      EVP_EncryptInit_ex(actx.get(), nullptr, nullptr, key, nonce) != 1 ||
+      EVP_EncryptUpdate(actx.get(), nullptr, &len, ad, adlen) != 1 ||
+      EVP_EncryptUpdate(actx.get(), dest, &len, plaintext, plaintextlen) != 1) {
+    return false;
   }
-
-  if (EVP_EncryptInit_ex(actx.get(), nullptr, nullptr, key, nonce) != 1)
-    return NGTCP2_ERR_CRYPTO;
-
-  if (EVP_EncryptUpdate(actx.get(), nullptr, &len, ad, adlen) != 1)
-    return NGTCP2_ERR_CRYPTO;
-
-  if (EVP_EncryptUpdate(actx.get(), dest, &len, plaintext, plaintextlen) != 1)
-    return NGTCP2_ERR_CRYPTO;
 
   outlen = len;
 
   if (EVP_EncryptFinal_ex(actx.get(), dest + outlen, &len) != 1)
-    return NGTCP2_ERR_CRYPTO;
+    return false;
 
   outlen += len;
 
-  CHECK_LE(outlen + taglen, destlen);
-
   if (EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_GET_TAG, taglen,
                           dest + outlen) != 1) {
-    return NGTCP2_ERR_CRYPTO;
+    return false;
   }
 
-  outlen += taglen;
-
-  return outlen;
+  return true;
 }
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_decrypt once
 // we move to ngtcp2_crypto
-ssize_t Decrypt(
+bool Decrypt(
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* ciphertext,
     size_t ciphertextlen,
-    const ngtcp2_crypto_aead* aead,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
@@ -392,60 +373,62 @@ ssize_t Decrypt(
       static_cast<const EVP_CIPHER*>(aead->native_handle);
   DCHECK_NOT_NULL(cipher);
 
-  if (taglen > ciphertextlen || destlen + taglen < ciphertextlen)
-    return -1;
-
   ciphertextlen -= taglen;
   auto tag = ciphertext + ciphertextlen;
 
   CipherCtxPointer actx(EVP_CIPHER_CTX_new());
   CHECK(actx);
 
-  size_t outlen;
   int len;
 
-  if (EVP_DecryptInit_ex(actx.get(), cipher, nullptr, nullptr, nullptr) != 1)
-    return NGTCP2_ERR_TLS_DECRYPT;
-
-  if (EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_SET_IVLEN,
-                          noncelen, nullptr) != 1) {
-    return NGTCP2_ERR_TLS_DECRYPT;
-  }
-
-  if (EVP_DecryptInit_ex(actx.get(), nullptr, nullptr, key, nonce) != 1)
-    return NGTCP2_ERR_TLS_DECRYPT;
-
-  if (EVP_DecryptUpdate(actx.get(), nullptr, &len, ad, adlen) != 1)
-    return NGTCP2_ERR_TLS_DECRYPT;
-
-  if (EVP_DecryptUpdate(actx.get(), dest, &len, ciphertext, ciphertextlen) != 1)
-    return NGTCP2_ERR_TLS_DECRYPT;
-
-  outlen = len;
-
-  if (EVP_CIPHER_CTX_ctrl(actx.get(), EVP_CTRL_AEAD_SET_TAG,
-                          taglen, const_cast<uint8_t *>(tag)) != 1) {
-    return NGTCP2_ERR_TLS_DECRYPT;
-  }
-
-  if (EVP_DecryptFinal_ex(actx.get(), dest + outlen, &len) != 1)
-    return NGTCP2_ERR_TLS_DECRYPT;
-
-  outlen += len;
-
-  return outlen;
+  return
+      EVP_DecryptInit_ex(
+          actx.get(),
+          cipher,
+          nullptr,
+          nullptr,
+          nullptr) == 1 &&
+      EVP_CIPHER_CTX_ctrl(
+          actx.get(),
+          EVP_CTRL_AEAD_SET_IVLEN,
+          noncelen,
+          nullptr) == 1 &&
+      EVP_DecryptInit_ex(
+          actx.get(),
+          nullptr,
+          nullptr,
+          key,
+          nonce) == 1 &&
+      EVP_DecryptUpdate(
+          actx.get(),
+          nullptr,
+          &len,
+          ad,
+          adlen) == 1 &&
+      EVP_DecryptUpdate(
+          actx.get(),
+          dest,
+          &len,
+          ciphertext,
+          ciphertextlen) == 1 &&
+      EVP_CIPHER_CTX_ctrl(
+          actx.get(),
+          EVP_CTRL_AEAD_SET_TAG,
+          taglen,
+          const_cast<uint8_t *>(tag)) == 1 &&
+      EVP_DecryptFinal_ex(
+          actx.get(),
+          dest + len,
+          &len) == 1;
 }
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_hp_mask once
 // we move to ngtcp2_crypto
-ssize_t HP_Mask(
+bool HP_Mask(
     uint8_t* dest,
-    size_t destlen,
     const ngtcp2_crypto_cipher* hp,
     const uint8_t* key,
-    size_t keylen,
-    const uint8_t* sample,
-    size_t samplelen) {
+    const uint8_t* sample) {
   static constexpr uint8_t PLAINTEXT[] = "\x00\x00\x00\x00\x00";
 
   DeleteFnPtr<EVP_CIPHER_CTX, EVP_CIPHER_CTX_free> actx;
@@ -456,27 +439,25 @@ ssize_t HP_Mask(
       static_cast<const EVP_CIPHER*>(hp->native_handle);
   DCHECK_NOT_NULL(cipher);
 
-  size_t outlen = 0;
   int len;
 
-  if (EVP_EncryptInit_ex(actx.get(), cipher, nullptr, key, sample) != 1)
-    return NGTCP2_ERR_CRYPTO;
-
-  if (EVP_EncryptUpdate(actx.get(), dest, &len, PLAINTEXT,
-                        strsize(PLAINTEXT)) != 1) {
-    return NGTCP2_ERR_CRYPTO;
-  }
-
-  CHECK_EQ(len, 5);
-
-  outlen = len;
-
-  if (EVP_EncryptFinal_ex(actx.get(), dest + outlen, &len) != 1)
-    return NGTCP2_ERR_CRYPTO;
-
-  CHECK_EQ(len, 0);
-
-  return outlen;
+  return
+      EVP_EncryptInit_ex(
+          actx.get(),
+          cipher,
+          nullptr,
+          key,
+          sample) == 1 &&
+      EVP_EncryptUpdate(
+          actx.get(),
+          dest,
+          &len,
+          PLAINTEXT,
+          strsize(PLAINTEXT)) == 1 &&
+      EVP_EncryptFinal_ex(
+          actx.get(),
+          dest + len,
+          &len) == 1;
 }
 
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
@@ -1303,7 +1284,7 @@ int Server_Transport_Params_Parse_CB(
 
 bool GenerateRetryToken(
     uint8_t* token,
-    size_t* tokenlen,
+    size_t& tokenlen,
     const sockaddr* addr,
     const ngtcp2_cid* ocid,
     std::array<uint8_t, TOKEN_SECRETLEN>* token_secret) {
@@ -1340,22 +1321,23 @@ bool GenerateRetryToken(
     return false;
   }
 
-  ssize_t n =
-      Encrypt(
-          token, *tokenlen,
-          plaintext.data(), std::distance(std::begin(plaintext), p),
+  size_t plaintextlen = std::distance(std::begin(plaintext), p);
+  if (!Encrypt(
+          token,
           &ctx.aead,
+          plaintext.data(),
+          plaintextlen,
           token_key.data(),
-          keylen,
           token_iv.data(),
           ivlen,
-          reinterpret_cast<const uint8_t *>(addr), addrlen);
-
-  if (n < 0)
+          reinterpret_cast<const uint8_t *>(addr),
+          addrlen)) {
     return false;
+  }
 
-  memcpy(token + n, rand_data.data(), rand_data.size());
-  *tokenlen = n + rand_data.size();
+  tokenlen = plaintextlen + aead_tag_length(&ctx.aead);
+  memcpy(token + tokenlen, rand_data.data(), rand_data.size());
+  tokenlen += rand_data.size();
   return true;
 }
 
@@ -1396,28 +1378,27 @@ bool InvalidRetryToken(
 
   std::array<uint8_t, 4096> plaintext;
 
-  ssize_t n =
-      Decrypt(
-          plaintext.data(), plaintext.size(),
-          ciphertext, ciphertextlen,
+  if (!Decrypt(
+          plaintext.data(),
           &ctx.aead,
+          ciphertext,
+          ciphertextlen,
           token_key.data(),
-          keylen,
           token_iv.data(),
           ivlen,
-          reinterpret_cast<const uint8_t*>(addr), addrlen);
+          reinterpret_cast<const uint8_t*>(addr), addrlen)) {
+    return true;
+  }
 
-  // Will also cover case where n is negative
-  if (static_cast<size_t>(n) < addrlen + sizeof(uint64_t))
+  size_t plaintextlen = ciphertextlen - aead_tag_length(&ctx.aead);
+  if (plaintextlen < addrlen + sizeof(uint64_t))
     return true;
 
-  ssize_t cil = static_cast<size_t>(n) - addrlen - sizeof(uint64_t);
-  if (cil != 0 && (cil < NGTCP2_MIN_CIDLEN || cil > NGTCP2_MAX_CIDLEN))
+  ssize_t cil = plaintextlen - addrlen - sizeof(uint64_t);
+  if ((cil != 0 && (cil < NGTCP2_MIN_CIDLEN || cil > NGTCP2_MAX_CIDLEN)) ||
+      memcmp(plaintext.data(), addr, addrlen) != 0) {
     return true;
-
-  if (memcmp(plaintext.data(), addr, addrlen) != 0)
-    return true;
-
+  }
 
   uint64_t t;
   memcpy(&t, plaintext.data() + addrlen, sizeof(uint64_t));

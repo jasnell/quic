@@ -479,150 +479,6 @@ void QuicSession::Destroy() {
   RemoveFromSocket();
 }
 
-ssize_t QuicSession::DoDecrypt(
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* ciphertext,
-    size_t ciphertextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(Connection());
-  ssize_t nwrite = Decrypt(
-      dest, destlen,
-      ciphertext, ciphertextlen,
-      &ctx->aead,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
-  return nwrite >= 0 ?
-      nwrite :
-      static_cast<ssize_t>(NGTCP2_ERR_TLS_DECRYPT);
-}
-
-ssize_t QuicSession::DoEncrypt(
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* plaintext,
-    size_t plaintextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(Connection());
-  ssize_t nwrite = Encrypt(
-      dest, destlen,
-      plaintext, plaintextlen,
-      &ctx->aead,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
-  return nwrite >= 0 ?
-      nwrite :
-      static_cast<ssize_t>(NGTCP2_ERR_CALLBACK_FAILURE);
-}
-
-ssize_t QuicSession::DoHPMask(
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* sample,
-    size_t samplelen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(Connection());
-  ssize_t nwrite = HP_Mask(
-      dest, destlen,
-      &ctx->hp,
-      key, keylen,
-      sample, samplelen);
-  return nwrite >= 0 ?
-      nwrite :
-      static_cast<ssize_t>(NGTCP2_ERR_CALLBACK_FAILURE);
-}
-
-ssize_t QuicSession::DoHSDecrypt(
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* ciphertext,
-    size_t ciphertextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
-  ssize_t nwrite = Decrypt(
-      dest, destlen,
-      ciphertext, ciphertextlen,
-      &ctx->aead,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
-  return nwrite >= 0 ?
-      nwrite :
-      static_cast<ssize_t>(NGTCP2_ERR_TLS_DECRYPT);
-}
-
-ssize_t QuicSession::DoHSEncrypt(
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* plaintext,
-    size_t plaintextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
-  ssize_t nwrite = Encrypt(
-      dest, destlen,
-      plaintext, plaintextlen,
-      &ctx->aead,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
-  return nwrite >= 0 ?
-      nwrite :
-      static_cast<ssize_t>(NGTCP2_ERR_CALLBACK_FAILURE);
-}
-
-ssize_t QuicSession::DoInHPMask(
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* sample,
-    size_t samplelen) {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
-  ssize_t nwrite = HP_Mask(
-      dest, destlen,
-      &ctx->hp,
-      key, keylen,
-      sample, samplelen);
-  return nwrite >= 0 ?
-      nwrite :
-      static_cast<ssize_t>(NGTCP2_ERR_CALLBACK_FAILURE);
-}
-
 void QuicSession::ExtendMaxStreamData(int64_t stream_id, uint64_t max_data) {
   Debug(this,
         "Extending max stream %" PRId64 " data to %" PRIu64,
@@ -3075,138 +2931,67 @@ int QuicSession::OnHandshakeCompleted(
   return 0;
 }
 
-// Called by ngtcp2 when TLS handshake data needs to be
-// encrypted prior to sending.
-ssize_t QuicSession::OnDoHSEncrypt(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* plaintext,
-    size_t plaintextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  QuicSession* session = static_cast<QuicSession*>(user_data);
-  QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->DoHSEncrypt(
-      dest, destlen,
-      plaintext, plaintextlen,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
-}
-
-// Called by ngtcp2 when encrypted TLS handshake data has
-// been received.
-ssize_t QuicSession::OnDoHSDecrypt(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* ciphertext,
-    size_t ciphertextlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  QuicSession* session = static_cast<QuicSession*>(user_data);
-  QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->DoHSDecrypt(
-      dest, destlen,
-      ciphertext, ciphertextlen,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
-}
-
 // Called by ngtcp2 when non-TLS handshake data needs to be
 // encrypted prior to sending.
-ssize_t QuicSession::OnDoEncrypt(
+int QuicSession::OnEncrypt(
     ngtcp2_conn* conn,
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* plaintext,
     size_t plaintextlen,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
     size_t adlen,
     void* user_data) {
-  QuicSession* session = static_cast<QuicSession*>(user_data);
-  QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->DoEncrypt(
-      dest, destlen,
-      plaintext, plaintextlen,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
+
+  return Encrypt(
+      dest,
+      aead,
+      plaintext,
+      plaintextlen,
+      key,
+      nonce,
+      noncelen,
+      ad,
+      adlen) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 
 // Called by ngtcp2 when encrypted non-TLS handshake data
 // has been received.
-ssize_t QuicSession::OnDoDecrypt(
+int QuicSession::OnDecrypt(
     ngtcp2_conn* conn,
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* ciphertext,
     size_t ciphertextlen,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
     size_t adlen,
     void* user_data) {
-  QuicSession* session = static_cast<QuicSession*>(user_data);
-  QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->DoDecrypt(
-      dest, destlen,
-      ciphertext, ciphertextlen,
-      key, keylen,
-      nonce, noncelen,
-      ad, adlen);
+  return Decrypt(
+      dest,
+      aead,
+      ciphertext,
+      ciphertextlen,
+      key,
+      nonce,
+      noncelen,
+      ad,
+      adlen) ? 0 : NGTCP2_ERR_TLS_DECRYPT;
 }
 
-ssize_t QuicSession::OnDoInHPMask(
+int QuicSession::OnHPMask(
     ngtcp2_conn* conn,
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_cipher* hp,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* sample,
-    size_t samplelen,
     void* user_data) {
-  QuicSession* session = static_cast<QuicSession*>(user_data);
-  QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->DoInHPMask(
-      dest, destlen,
-      key, keylen,
-      sample, samplelen);
-}
-
-ssize_t QuicSession::OnDoHPMask(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    size_t destlen,
-    const uint8_t* key,
-    size_t keylen,
-    const uint8_t* sample,
-    size_t samplelen,
-    void* user_data) {
-  QuicSession* session = static_cast<QuicSession*>(user_data);
-  QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->DoHPMask(
-      dest, destlen,
-      key, keylen,
-      sample, samplelen);
+  return HP_Mask(dest, hp, key, sample) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 
 // Called by ngtcp2 when a chunk of stream data has been received.
@@ -3400,12 +3185,9 @@ const ngtcp2_conn_callbacks QuicServerSession::callbacks = {
   OnReceiveCryptoData,
   OnHandshakeCompleted,
   nullptr,  // recv_version_negotiation
-  OnDoHSEncrypt,
-  OnDoHSDecrypt,
-  OnDoEncrypt,
-  OnDoDecrypt,
-  OnDoInHPMask,
-  OnDoHPMask,
+  OnEncrypt,
+  OnDecrypt,
+  OnHPMask,
   OnReceiveStreamData,
   OnAckedCryptoOffset,
   OnAckedStreamDataOffset,
@@ -3433,12 +3215,9 @@ const ngtcp2_conn_callbacks QuicClientSession::callbacks = {
   OnReceiveCryptoData,
   OnHandshakeCompleted,
   OnVersionNegotiation,
-  OnDoHSEncrypt,
-  OnDoHSDecrypt,
-  OnDoEncrypt,
-  OnDoDecrypt,
-  OnDoInHPMask,
-  OnDoHPMask,
+  OnEncrypt,
+  OnDecrypt,
+  OnHPMask,
   OnReceiveStreamData,
   OnAckedCryptoOffset,
   OnAckedStreamDataOffset,

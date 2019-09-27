@@ -88,14 +88,12 @@ const ngtcp2_crypto_ctx* GetInitialCryptoContext(ngtcp2_conn* conn);
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_encrypt once
 // we move to ngtcp2_crypto
-ssize_t Encrypt(
+bool Encrypt(
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* plaintext,
     size_t plaintextlen,
-    const ngtcp2_crypto_aead* aead,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
@@ -103,14 +101,12 @@ ssize_t Encrypt(
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_decrypt once
 // we move to ngtcp2_crypto
-ssize_t Decrypt(
+bool Decrypt(
     uint8_t* dest,
-    size_t destlen,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* ciphertext,
     size_t ciphertextlen,
-    const ngtcp2_crypto_aead* aead,
     const uint8_t* key,
-    size_t keylen,
     const uint8_t* nonce,
     size_t noncelen,
     const uint8_t* ad,
@@ -118,15 +114,11 @@ ssize_t Decrypt(
 
 // TODO(@jasnell): Replace with ngtcp2_crypto_hp_mask once
 // we move to ngtcp2_crypto
-ssize_t HP_Mask(
+bool HP_Mask(
     uint8_t* dest,
-    size_t destlen,
     const ngtcp2_crypto_cipher* hp,
     const uint8_t* key,
-    size_t keylen,
-    const uint8_t* sample,
-    size_t samplelen);
-
+    const uint8_t* sample);
 
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 bool DerivePacketProtectionKey(
@@ -278,7 +270,7 @@ int Server_Transport_Params_Parse_CB(
 
 bool GenerateRetryToken(
     uint8_t* token,
-    size_t* tokenlen,
+    size_t& tokenlen,
     const sockaddr* addr,
     const ngtcp2_cid* ocid,
     std::array<uint8_t, TOKEN_SECRETLEN>* token_secret);

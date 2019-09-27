@@ -178,7 +178,7 @@ class QuicSocket : public HandleWrap,
       const uint8_t* data,
       const struct sockaddr* addr,
       unsigned int flags);
-  ssize_t SendRetry(
+  bool SendRetry(
       uint32_t version,
       QuicCID* dcid,
       QuicCID* scid,

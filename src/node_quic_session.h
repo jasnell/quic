@@ -431,64 +431,7 @@ class QuicSession : public AsyncWrap,
   // peer.
   void SilentClose(bool stateless_reset = false);
   QuicStream* CreateStream(int64_t stream_id);
-  ssize_t DoHSEncrypt(
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* plaintext,
-      size_t plaintextlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* nonce,
-      size_t noncelen,
-      const uint8_t* ad,
-      size_t adlen);
-  ssize_t DoHSDecrypt(
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* ciphertext,
-      size_t ciphertextlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* nonce,
-      size_t noncelen,
-      const uint8_t* ad,
-      size_t adlen);
-  ssize_t DoEncrypt(
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* plaintext,
-      size_t plaintextlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* nonce,
-      size_t noncelen,
-      const uint8_t* ad,
-      size_t adlen);
-  ssize_t DoDecrypt(
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* ciphertext,
-      size_t ciphertextlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* nonce,
-      size_t noncelen,
-      const uint8_t* ad,
-      size_t adlen);
-  ssize_t DoInHPMask(
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* sample,
-      size_t samplelen);
-  ssize_t DoHPMask(
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* sample,
-      size_t samplelen);
+
   void ExtendMaxStreamData(int64_t stream_id, uint64_t max_data);
   void ExtendMaxStreams(bool bidi, uint64_t max_streams);
   void ExtendMaxStreamsUni(uint64_t max_streams);
@@ -564,75 +507,36 @@ class QuicSession : public AsyncWrap,
   static int OnHandshakeCompleted(
       ngtcp2_conn* conn,
       void* user_data);
-  static ssize_t OnDoHSEncrypt(
+  static int OnEncrypt(
       ngtcp2_conn* conn,
       uint8_t* dest,
-      size_t destlen,
+      const ngtcp2_crypto_aead* aead,
       const uint8_t* plaintext,
       size_t plaintextlen,
       const uint8_t* key,
-      size_t keylen,
       const uint8_t* nonce,
       size_t noncelen,
       const uint8_t* ad,
       size_t adlen,
       void* user_data);
-  static ssize_t OnDoHSDecrypt(
+  static int OnDecrypt(
       ngtcp2_conn* conn,
       uint8_t* dest,
-      size_t destlen,
+      const ngtcp2_crypto_aead* aead,
       const uint8_t* ciphertext,
       size_t ciphertextlen,
       const uint8_t* key,
-      size_t keylen,
       const uint8_t* nonce,
       size_t noncelen,
       const uint8_t* ad,
       size_t adlen,
       void* user_data);
-  static ssize_t OnDoEncrypt(
+  static int OnHPMask(
       ngtcp2_conn* conn,
       uint8_t* dest,
-      size_t destlen,
-      const uint8_t* plaintext,
-      size_t plaintextlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* nonce,
-      size_t noncelen,
-      const uint8_t* ad,
-      size_t adlen,
-      void* user_data);
-  static ssize_t OnDoDecrypt(
-      ngtcp2_conn* conn,
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* ciphertext,
-      size_t ciphertextlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* nonce,
-      size_t noncelen,
-      const uint8_t* ad,
-      size_t adlen,
-      void* user_data);
-  static ssize_t OnDoInHPMask(
-      ngtcp2_conn* conn,
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* key,
-      size_t keylen,
+      const ngtcp2_crypto_cipher* hp,
+      const uint8_t* hp_key,
       const uint8_t* sample,
-      size_t samplelen,
-      void* user_data);
-  static ssize_t OnDoHPMask(
-      ngtcp2_conn* conn,
-      uint8_t* dest,
-      size_t destlen,
-      const uint8_t* key,
-      size_t keylen,
-      const uint8_t* sample,
-      size_t samplelen,
       void* user_data);
   static int OnReceiveStreamData(
       ngtcp2_conn* conn,
