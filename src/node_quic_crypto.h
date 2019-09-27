@@ -186,7 +186,7 @@ int KeyCB(
     size_t secretlen,
     void* arg);
 
-int ClearTLS(SSL* ssl, bool continue_on_error = false);
+bool ClearTLS(SSL* ssl);
 
 int DoTLSHandshake(SSL* ssl);
 

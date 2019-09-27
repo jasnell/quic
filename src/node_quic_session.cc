@@ -1046,20 +1046,20 @@ int QuicSession::ReceiveCryptoData(
     size_t datalen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
+
   Debug(this, "Receiving %d bytes of crypto data.", datalen);
 
-  int err = WritePeerHandshake(crypto_level, data, datalen);
-  if (err < 0)
-    return err;
+  if (!WritePeerHandshake(crypto_level, data, datalen)) {
+    Debug(this, "Unable to cache peer handshake data.");
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
 
   // If the handshake is not yet completed, incrementally advance
   // the handshake process.
-  if (!IsHandshakeCompleted())
-    return TLSHandshake();
+  if (!IsHandshakeCompleted() && !TLSHandshake())
+    return NGTCP2_ERR_CRYPTO;
 
-  // It's possible that not all of the data was consumed. Anything
-  // that's remaining needs to be read but is not used.
-  return TLSRead();
+  return 0;
 }
 
 // The ReceiveClientInitial function is called by ngtcp2 when
@@ -1627,9 +1627,11 @@ void QuicSession::StreamReset(
 // Incrementally performs the TLS handshake. This function is called
 // multiple times while handshake data is being passed back and forth
 // between the peers.
-int QuicSession::TLSHandshake() {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
-    return 0;
+bool QuicSession::TLSHandshake() {
+  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED) ||
+      IsHandshakeCompleted()) {
+    return true;
+  }
 
   ClearTLSError();
 
@@ -1638,9 +1640,10 @@ int QuicSession::TLSHandshake() {
   if (!IsFlagSet(QUICSESSION_FLAG_INITIAL)) {
     Debug(this, "TLS handshake starting");
     session_stats_.handshake_start_at = now;
-    err = TLSHandshake_Initial();
-    if (err != 0)
-      return err;
+    if (TLSHandshake_Initial() != 0) {
+      Debug(this, "TLS handshake failed at initialization");
+      return false;
+    }
   } else {
     Debug(this, "TLS handshake continuing");
     uint64_t ts =
@@ -1651,27 +1654,22 @@ int QuicSession::TLSHandshake() {
   }
   session_stats_.handshake_continue_at = now;
 
-  // If DoTLSHandshake returns 0 or negative, the handshake
-  // is not yet complete.
-  err = DoTLSHandshake(ssl());
-  if (err <= 0)
-    return err;
+  if (DoTLSHandshake(ssl()) <= 0 || !TLSHandshake_Complete()) {
+    Debug(this, "TLS handshake is not yet completed.");
+    return false;
+  }
 
-  err = TLSHandshake_Complete();
-  if (err != 0)
-    return err;
-
-  Debug(this, "TLS Handshake completed.");
+  Debug(this, "TLS handshake completed.");
   SetHandshakeCompleted();
-  return 0;
+  return true;
 }
 
 // It's possible for TLS handshake to contain extra data that is not
 // consumed by ngtcp2. That's ok and the data is just extraneous. We just
 // read it and throw it away, unless there's an error.
-int QuicSession::TLSRead() {
+bool QuicSession::TLSRead() {
   ClearTLSError();
-  return ClearTLS(ssl(), Side() != NGTCP2_CRYPTO_SIDE_SERVER);
+  return ClearTLS(ssl());
 }
 
 void QuicSession::UpdateIdleTimer() {
@@ -1760,17 +1758,16 @@ bool QuicSession::WritePackets(const char* diagnostic_label) {
 }
 
 // Writes peer handshake data to the internal buffer
-int QuicSession::WritePeerHandshake(
+bool QuicSession::WritePeerHandshake(
     ngtcp2_crypto_level crypto_level,
     const uint8_t* data,
     size_t datalen) {
-  if (rx_crypto_level_ != crypto_level)
-    return NGTCP2_ERR_CRYPTO;
+  CHECK_EQ(rx_crypto_level_, crypto_level);
   if (peer_handshake_.size() + datalen > max_crypto_buffer_)
-    return NGTCP2_ERR_CRYPTO_BUFFER_EXCEEDED;
+    return false;
   Debug(this, "Writing %d bytes of peer handshake data.", datalen);
   std::copy_n(data, datalen, std::back_inserter(peer_handshake_));
-  return 0;
+  return true;
 }
 
 // Called by ngtcp2 when the QuicSession keys need to be updated. This may
@@ -2383,7 +2380,8 @@ BaseObjectPtr<QuicSession> QuicClientSession::New(
           options);
 
   session->AddToSocket(socket);
-  session->TLSHandshake();
+  // This should never fail at this initial step.
+  CHECK(session->TLSHandshake());
   return session;
 }
 
@@ -2767,7 +2765,7 @@ bool QuicClientSession::SetupInitialCryptoContext() {
       NGTCP2_CRYPTO_SIDE_CLIENT);
 }
 
-int QuicClientSession::TLSHandshake_Complete() {
+bool QuicClientSession::TLSHandshake_Complete() {
   if (IsOptionSet(QUICCLIENTSESSION_OPTION_RESUME) &&
       SSL_get_early_data_status(ssl()) != SSL_EARLY_DATA_ACCEPTED) {
     Debug(this, "Early data was rejected.");
@@ -2777,9 +2775,9 @@ int QuicClientSession::TLSHandshake_Complete() {
             "Failure notifying ngtcp2 about early data rejection. Error %d",
             err);
     }
-    return err;
+    return false;
   }
-  return TLSRead();
+  return QuicSession::TLSHandshake_Complete();
 }
 
 int QuicClientSession::TLSHandshake_Initial() {
@@ -2839,7 +2837,7 @@ int QuicSession::OnClientInitial(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  return session->TLSHandshake() == 0 ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+  return session->TLSHandshake() ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 
 // Called by ngtcp2 for a new server connection when the initial

@@ -316,7 +316,7 @@ class QuicSession : public AsyncWrap,
   int ShutdownStream(
       int64_t stream_id,
       uint64_t error_code = NGTCP2_APP_NOERROR);
-  int TLSRead();
+  bool TLSRead();
   ngtcp2_crypto_side Side() const { return side_; }
   void WriteHandshake(const uint8_t* data, size_t datalen);
 
@@ -329,7 +329,7 @@ class QuicSession : public AsyncWrap,
       crypto::SecureContext* context,
       v8::Local<v8::Value> ocsp_response) {}
   virtual void RemoveFromSocket();
-  virtual int TLSHandshake_Complete() { return 0; }
+  virtual bool TLSHandshake_Complete() { return TLSRead(); }
 
   // These must be implemented by QuicSession types
   virtual void AddToSocket(QuicSocket* socket) = 0;
@@ -461,10 +461,10 @@ class QuicSession : public AsyncWrap,
       int64_t stream_id,
       uint64_t final_size,
       uint64_t app_error_code);
-  int TLSHandshake();
+  bool TLSHandshake();
   bool UpdateKey();
   bool WritePackets(const char* diagnostic_label = nullptr);
-  int WritePeerHandshake(
+  bool WritePeerHandshake(
       ngtcp2_crypto_level crypto_level,
       const uint8_t* data,
       size_t datalen);
@@ -916,6 +916,8 @@ class QuicSession : public AsyncWrap,
         // event handlers is called synchronously. If the function is called
         // asynchronously, then we have to manually continue the handshake.
         if (!TLSHandshakeCallbackScope::IsInTLSHandshakeCallback(session_)) {
+          // TODO(@jasnell): If TLSHandshake returns false here, something
+          // is definitely wrong. We need to handle accordingly.
           session_->TLSHandshake();
           session_->SendPendingData();
         }
@@ -1101,7 +1103,7 @@ class QuicClientSession : public QuicSession {
     ngtcp2_addr* dest,
     const ngtcp2_preferred_addr* paddr) override;
   void StoreRemoteTransportParams(ngtcp2_transport_params* params) override;
-  int TLSHandshake_Complete() override;
+  bool TLSHandshake_Complete() override;
   int TLSHandshake_Initial() override;
   int VerifyPeerIdentity(const char* hostname) override;
   void VersionNegotiation(

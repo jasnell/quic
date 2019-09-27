@@ -908,54 +908,35 @@ int KeyCB(
   return session->OnKey(name, secret, secretlen) ? 1 : 0;
 }
 
-int ClearTLS(SSL* ssl, bool continue_on_error) {
+int HandleTLSError(SSL* ssl, int err = 0) {
+  int code = SSL_get_error(ssl, err);
+  switch (code) {
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+    case SSL_ERROR_WANT_CLIENT_HELLO_CB:
+    case SSL_ERROR_WANT_X509_LOOKUP:
+      return 0;
+    case SSL_ERROR_SSL:
+    case SSL_ERROR_ZERO_RETURN:
+    default:
+      return NGTCP2_ERR_CRYPTO;
+  }
+}
+
+bool ClearTLS(SSL* ssl) {
   std::array<uint8_t, 4096> buf;
   size_t nread;
   for (;;) {
     int err = SSL_read_ex(ssl, buf.data(), buf.size(), &nread);
-    if (err == 1) {
-      if (continue_on_error)
-        continue;
-      return NGTCP2_ERR_PROTO;
-    }
-    int code = SSL_get_error(ssl, 0);
-    switch (code) {
-      case SSL_ERROR_WANT_READ:
-      case SSL_ERROR_WANT_WRITE:
-      case SSL_ERROR_WANT_CLIENT_HELLO_CB:
-      case SSL_ERROR_WANT_X509_LOOKUP:
-        return 0;
-      case SSL_ERROR_SSL:
-      case SSL_ERROR_ZERO_RETURN:
-        return NGTCP2_ERR_CRYPTO;
-      default:
-        return NGTCP2_ERR_CRYPTO;
-    }
+    if (err <= 0)
+      return HandleTLSError(ssl, err) == 0;
   }
-  return 0;
+  return true;
 }
 
 int DoTLSHandshake(SSL* ssl) {
   int err = SSL_do_handshake(ssl);
-  if (err <= 0) {
-    err = SSL_get_error(ssl, err);
-    switch (err) {
-      case SSL_ERROR_WANT_READ:
-      case SSL_ERROR_WANT_WRITE:
-        // For the next two, the handshake has been suspended but
-        // the data was otherwise successfully read, so return 0
-        // here but the handshake won't continue until we trigger
-        // things on our side.
-      case SSL_ERROR_WANT_CLIENT_HELLO_CB:
-      case SSL_ERROR_WANT_X509_LOOKUP:
-        return 0;
-      case SSL_ERROR_SSL:
-        return NGTCP2_ERR_CRYPTO;
-      default:
-        return NGTCP2_ERR_CRYPTO;
-    }
-  }
-  return err;
+  return err <= 0 ? HandleTLSError(ssl, err) : err;
 }
 
 int DoTLSReadEarlyData(SSL* ssl) {
@@ -963,31 +944,10 @@ int DoTLSReadEarlyData(SSL* ssl) {
   size_t nread;
   int err = SSL_read_early_data(ssl, buf.data(), buf.size(), &nread);
   switch (err) {
-    case SSL_READ_EARLY_DATA_ERROR: {
-      int code = SSL_get_error(ssl, err);
-      switch (code) {
-        case SSL_ERROR_WANT_READ:
-        case SSL_ERROR_WANT_WRITE:
-        // For the next two, the handshake has been suspended but
-        // the data was otherwise successfully read, so return 0
-        // here but the handshake won't continue until we trigger
-        // things on our side.
-        case SSL_ERROR_WANT_CLIENT_HELLO_CB:
-        case SSL_ERROR_WANT_X509_LOOKUP:
-          return 0;
-        case SSL_ERROR_SSL:
-          return NGTCP2_ERR_CRYPTO;
-        default:
-          return NGTCP2_ERR_CRYPTO;
-      }
-      break;
-    }
+    case SSL_READ_EARLY_DATA_ERROR:
+      return HandleTLSError(ssl, err);
     case SSL_READ_EARLY_DATA_SUCCESS:
-      if (nread > 0)
-        return NGTCP2_ERR_PROTO;
-      break;
-    case SSL_READ_EARLY_DATA_FINISH:
-      break;
+      return nread > 0 ? NGTCP2_ERR_PROTO : 0;
   }
   return 0;
 }
