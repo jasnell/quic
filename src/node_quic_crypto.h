@@ -71,18 +71,6 @@ BIO_METHOD* CreateBIOMethod();
 const ngtcp2_crypto_ctx* GetCryptoContext(ngtcp2_conn* conn, SSL* ssl);
 const ngtcp2_crypto_ctx* GetInitialCryptoContext(ngtcp2_conn* conn);
 
-// TODO(@jasnell): Replace with ngtcp2_crypto_aead_keylen once
-// we move to ngtcp2_crypto.h
-size_t aead_key_length(const ngtcp2_crypto_ctx* ctx);
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_packet_protection_ivlen
-// once we move to ngtcp2_crypto.h
-size_t packet_protection_ivlen(const ngtcp2_crypto_ctx* ctx);
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_aead_taglen once
-// we move to ngtcp2_crypto.h
-size_t aead_tag_length(const ngtcp2_crypto_ctx* ctx);
-
 // TODO(@jasnell): Replace with ngtcp2_crypto_encrypt once
 // we move to ngtcp2_crypto
 ssize_t Encrypt(
@@ -90,7 +78,7 @@ ssize_t Encrypt(
     size_t destlen,
     const uint8_t* plaintext,
     size_t plaintextlen,
-    const ngtcp2_crypto_ctx* ctx,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* nonce,
@@ -105,7 +93,7 @@ ssize_t Decrypt(
     size_t destlen,
     const uint8_t* ciphertext,
     size_t ciphertextlen,
-    const ngtcp2_crypto_ctx* ctx,
+    const ngtcp2_crypto_aead* aead,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* nonce,
@@ -118,7 +106,7 @@ ssize_t Decrypt(
 ssize_t HP_Mask(
     uint8_t* dest,
     size_t destlen,
-    const ngtcp2_crypto_ctx* ctx,
+    const ngtcp2_crypto_cipher* hp,
     const uint8_t* key,
     size_t keylen,
     const uint8_t* sample,
@@ -154,8 +142,7 @@ void ClearTLSError();
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 void InstallEarlyKeys(
     ngtcp2_conn* connection,
-    size_t keylen,
-    size_t ivlen,
+    const ngtcp2_crypto_ctx* ctx,
     const SessionKey& key,
     const SessionIV& iv,
     const SessionKey& hp);
@@ -163,8 +150,7 @@ void InstallEarlyKeys(
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 void InstallHandshakeRXKeys(
     ngtcp2_conn* connection,
-    size_t keylen,
-    size_t ivlen,
+    const ngtcp2_crypto_ctx* ctx,
     const SessionKey& key,
     const SessionIV& iv,
     const SessionKey& hp);
@@ -172,8 +158,7 @@ void InstallHandshakeRXKeys(
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 void InstallHandshakeTXKeys(
     ngtcp2_conn* connection,
-    size_t keylen,
-    size_t ivlen,
+    const ngtcp2_crypto_ctx* ctx,
     const SessionKey& key,
     const SessionIV& iv,
     const SessionKey& hp);
@@ -181,8 +166,7 @@ void InstallHandshakeTXKeys(
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 void InstallRXKeys(
     ngtcp2_conn* connection,
-    size_t keylen,
-    size_t ivlen,
+    const ngtcp2_crypto_ctx* ctx,
     const SessionKey& key,
     const SessionIV& iv,
     const SessionKey& hp);
@@ -190,8 +174,7 @@ void InstallRXKeys(
 // TODO(@jasnell): Remove once we move to ngtcp2_crypto
 void InstallTXKeys(
     ngtcp2_conn* connection,
-    size_t keylen,
-    size_t ivlen,
+    const ngtcp2_crypto_ctx* ctx,
     const SessionKey& key,
     const SessionIV& iv,
     const SessionKey& hp);

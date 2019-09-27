@@ -492,10 +492,11 @@ ssize_t QuicSession::DoDecrypt(
     size_t adlen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
+  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(Connection());
   ssize_t nwrite = Decrypt(
       dest, destlen,
       ciphertext, ciphertextlen,
-      ngtcp2_conn_get_crypto_ctx(Connection()),
+      &ctx->aead,
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -517,10 +518,11 @@ ssize_t QuicSession::DoEncrypt(
     size_t adlen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
+  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(Connection());
   ssize_t nwrite = Encrypt(
       dest, destlen,
       plaintext, plaintextlen,
-      ngtcp2_conn_get_crypto_ctx(Connection()),
+      &ctx->aead,
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -538,9 +540,10 @@ ssize_t QuicSession::DoHPMask(
     size_t samplelen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return NGTCP2_ERR_CALLBACK_FAILURE;
+  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(Connection());
   ssize_t nwrite = HP_Mask(
       dest, destlen,
-      ngtcp2_conn_get_crypto_ctx(Connection()),
+      &ctx->hp,
       key, keylen,
       sample, samplelen);
   return nwrite >= 0 ?
@@ -565,7 +568,7 @@ ssize_t QuicSession::DoHSDecrypt(
   ssize_t nwrite = Decrypt(
       dest, destlen,
       ciphertext, ciphertextlen,
-      ctx,
+      &ctx->aead,
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -591,7 +594,7 @@ ssize_t QuicSession::DoHSEncrypt(
   ssize_t nwrite = Encrypt(
       dest, destlen,
       plaintext, plaintextlen,
-      ctx,
+      &ctx->aead,
       key, keylen,
       nonce, noncelen,
       ad, adlen);
@@ -612,7 +615,7 @@ ssize_t QuicSession::DoInHPMask(
   const ngtcp2_crypto_ctx* ctx = GetInitialCryptoContext(Connection());
   ssize_t nwrite = HP_Mask(
       dest, destlen,
-      ctx,
+      &ctx->hp,
       key, keylen,
       sample, samplelen);
   return nwrite >= 0 ?
@@ -816,8 +819,7 @@ void QuicSession::OnIdleTimeout() {
 // available at the same time.
 bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
   typedef void (*install_fn)(ngtcp2_conn* conn,
-                             size_t keylen,
-                             size_t ivlen,
+                             const ngtcp2_crypto_ctx* ctx,
                              const SessionKey& key,
                              const SessionIV& iv,
                              const SessionKey& hp);
@@ -832,9 +834,6 @@ bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
   SessionKey hp;
 
   const ngtcp2_crypto_ctx* ctx = GetCryptoContext(Connection(), ssl());
-
-  size_t keylen = aead_key_length(ctx);
-  size_t ivlen = packet_protection_ivlen(ctx);
 
   switch (Side()) {
     case NGTCP2_CRYPTO_SIDE_SERVER:
@@ -869,24 +868,24 @@ bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
 
   switch (name) {
     case SSL_KEY_CLIENT_EARLY_TRAFFIC:
-      InstallEarlyKeys(Connection(), keylen, ivlen, key, iv, hp);
+      InstallEarlyKeys(Connection(), ctx, key, iv, hp);
       break;
     case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
-      install_client_handshake_key(Connection(), keylen, ivlen, key, iv, hp);
+      install_client_handshake_key(Connection(), ctx, key, iv, hp);
       SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
       break;
     case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
       client_secret->assign(secret, secret + secretlen);
-      install_client_key(Connection(), keylen, ivlen, key, iv, hp);
+      install_client_key(Connection(), ctx, key, iv, hp);
       SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
       break;
     case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
-      install_server_handshake_key(Connection(), keylen, ivlen, key, iv, hp);
+      install_server_handshake_key(Connection(), ctx, key, iv, hp);
       SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
       break;
     case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
       server_secret->assign(secret, secret + secretlen);
-      install_server_key(Connection(), keylen, ivlen, key, iv, hp);
+      install_server_key(Connection(), ctx, key, iv, hp);
       SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
     break;
   }
