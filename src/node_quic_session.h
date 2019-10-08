@@ -17,6 +17,7 @@
 #include "uv.h"
 
 #include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
 #include <openssl/ssl.h>
 
 #include <functional>
@@ -203,6 +204,7 @@ class QuicSession : public AsyncWrap,
       // to the HTTP/3 identifier. For QUIC, the alpn identifier
       // is always required.
       const std::string& alpn,
+      const std::string& hostname,
       uint32_t options = 0,
       uint64_t initial_connection_close = NGTCP2_NO_ERROR);
   ~QuicSession() override;
@@ -210,7 +212,17 @@ class QuicSession : public AsyncWrap,
   std::string diagnostic_name() const override;
 
   inline QuicError GetLastError() const;
-  inline void SetTLSAlert(int err);
+  void SetTLSAlert(int err);
+
+  void EnableTrace();
+
+  ngtcp2_crypto_level GetReadCryptoLevel() {
+    return from_ossl_level(SSL_quic_read_level(ssl()));
+  }
+
+  ngtcp2_crypto_level GetWriteCryptoLevel() {
+    return from_ossl_level(SSL_quic_write_level(ssl()));
+  }
 
   // Returns true if StartGracefulClose() has been called and the
   // QuicSession is currently in the process of a graceful close.
@@ -230,6 +242,7 @@ class QuicSession : public AsyncWrap,
   inline void StartGracefulClose();
 
   const std::string& GetALPN() const { return alpn_; }
+  const std::string& GetHostname() const { return hostname_; }
 
   // Returns the associated peer's address. Note that this
   // value can change over the lifetime of the QuicSession.
@@ -258,7 +271,11 @@ class QuicSession : public AsyncWrap,
   bool IsHandshakeCompleted();
   void MaybeTimeout();
   void OnIdleTimeout();
-  bool OnKey(int name, const uint8_t* secret, size_t secretlen);
+  bool OnSecrets(
+      ngtcp2_crypto_level level,
+      const uint8_t* rx_secret,
+      const uint8_t* tx_secret,
+      size_t secretlen);
   bool OpenBidirectionalStream(int64_t* stream_id);
   bool OpenUnidirectionalStream(int64_t* stream_id);
   void Ping();
@@ -318,7 +335,10 @@ class QuicSession : public AsyncWrap,
       uint64_t error_code = NGTCP2_APP_NOERROR);
   bool TLSRead();
   ngtcp2_crypto_side Side() const { return side_; }
-  void WriteHandshake(const uint8_t* data, size_t datalen);
+  void WriteHandshake(
+      ngtcp2_crypto_level level,
+      const uint8_t* data,
+      size_t datalen);
 
   // These may be implemented by QuicSession types
   virtual void HandleError();
@@ -329,13 +349,11 @@ class QuicSession : public AsyncWrap,
       crypto::SecureContext* context,
       v8::Local<v8::Value> ocsp_response) {}
   virtual void RemoveFromSocket();
-  virtual bool TLSHandshake_Complete() { return TLSRead(); }
 
   // These must be implemented by QuicSession types
   virtual void AddToSocket(QuicSocket* socket) = 0;
   virtual int OnTLSStatus() = 0;
   virtual bool SendConnectionClose() = 0;
-  virtual int TLSHandshake_Initial() = 0;
 
   // Implementation for mem::NgLibMemoryManager
   inline void CheckAllocatedSize(size_t previous_size) const;
@@ -366,6 +384,10 @@ class QuicSession : public AsyncWrap,
 
   void MemoryInfo(MemoryTracker* tracker) const override;
 
+  bool IsOptionSet(uint32_t option) const {
+    return options_ & option;
+  }
+
  private:
   // Returns true if the QuicSession has entered the
   // closing period following a call to ImmediateClose.
@@ -391,7 +413,9 @@ class QuicSession : public AsyncWrap,
            IsFlagSet(QUICSESSION_FLAG_CLIENT_HELLO_CB_RUNNING);
   }
 
-  void AckedCryptoOffset(size_t datalen);
+  void AckedCryptoOffset(
+      ngtcp2_crypto_level level,
+      size_t datalen);
   void AckedStreamDataOffset(
       int64_t stream_id,
       uint64_t offset,
@@ -438,7 +462,6 @@ class QuicSession : public AsyncWrap,
   void ExtendMaxStreamsBidi(uint64_t max_streams);
   int GetNewConnectionID(ngtcp2_cid* cid, uint8_t* token, size_t cidlen);
   void HandshakeCompleted();
-  void InitTLS();
   void Keylog(const char* line);
   void PathValidation(
     const ngtcp2_path* path,
@@ -461,7 +484,6 @@ class QuicSession : public AsyncWrap,
       int64_t stream_id,
       uint64_t final_size,
       uint64_t app_error_code);
-  bool TLSHandshake();
   bool UpdateKey();
   bool WritePackets(const char* diagnostic_label = nullptr);
   bool WritePeerHandshake(
@@ -481,12 +503,6 @@ class QuicSession : public AsyncWrap,
       const uint32_t* sv,
       size_t nsv) {}
 
-  virtual void InitTLS_Post() = 0;
-  virtual ngtcp2_crypto_level GetServerCryptoLevel() = 0;
-  virtual ngtcp2_crypto_level GetClientCryptoLevel() = 0;
-  virtual void SetServerCryptoLevel(ngtcp2_crypto_level level) = 0;
-  virtual void SetClientCryptoLevel(ngtcp2_crypto_level level) = 0;
-  virtual void SetLocalCryptoLevel(ngtcp2_crypto_level level) = 0;
   virtual int VerifyPeerIdentity(const char* hostname) = 0;
 
   // static ngtcp2 callbacks
@@ -706,10 +722,6 @@ class QuicSession : public AsyncWrap,
       options_ &= ~option;
   }
 
-  bool IsOptionSet(uint32_t option) const {
-    return options_ & option;
-  }
-
   void IncrementConnectionCloseAttempts() {
     if (connection_close_attempts_ < kMaxSizeT)
       connection_close_attempts_++;
@@ -745,12 +757,8 @@ class QuicSession : public AsyncWrap,
   ngtcp2_crypto_side side_;
   BaseObjectWeakPtr<QuicSocket> socket_;
   std::string alpn_;
+  std::string hostname_;
 
-  std::unique_ptr<KeyStorage> key_storage_handshake_;
-  std::unique_ptr<KeyStorage> key_storage_session_;
-
-  ngtcp2_crypto_level rx_crypto_level_ = NGTCP2_CRYPTO_LEVEL_INITIAL;
-  ngtcp2_crypto_level tx_crypto_level_ = NGTCP2_CRYPTO_LEVEL_INITIAL;
   QuicError last_error_ = { QUIC_ERROR_SESSION, NGTCP2_NO_ERROR };
 
   crypto::SSLPointer ssl_;
@@ -767,6 +775,8 @@ class QuicSession : public AsyncWrap,
   size_t connection_close_attempts_ = 0;
   size_t connection_close_limit_ = 1;
 
+  crypto::BIOPointer bio_trace_;
+
   TimerPointer idle_;
   TimerPointer retransmit_;
 
@@ -781,8 +791,8 @@ class QuicSession : public AsyncWrap,
 
   // The handshake_ is a temporary holding for outbound TLS handshake
   // data. On send, the contents of the handshake_ will be
-  // transfered to the txbuf_
-  QuicBuffer handshake_;
+  // transfered to the txbuf_. There is one buffer per crypto level
+  QuicBuffer handshake_[3];
 
   // The txbuf_ contains all of the data that has been passed off
   // to the QuicSocket. The data will remain in the txbuf_ until
@@ -897,7 +907,11 @@ class QuicSession : public AsyncWrap,
 
   class TLSHandshakeScope {
    public:
-    TLSHandshakeScope(QuicSession* session, QuicSessionFlags monitor) :
+    TLSHandshakeScope(
+        ngtcp2_crypto_level level,
+        QuicSession* session,
+        QuicSessionFlags monitor) :
+        level_{level},
         session_{session},
         monitor_(monitor) {}
 
@@ -916,15 +930,14 @@ class QuicSession : public AsyncWrap,
         // event handlers is called synchronously. If the function is called
         // asynchronously, then we have to manually continue the handshake.
         if (!TLSHandshakeCallbackScope::IsInTLSHandshakeCallback(session_)) {
-          // TODO(@jasnell): If TLSHandshake returns false here, something
-          // is definitely wrong. We need to handle accordingly.
-          session_->TLSHandshake();
+          session_->ReceiveCryptoData(level_, 0, nullptr, 0);
           session_->SendPendingData();
         }
       }
     }
 
    private:
+    ngtcp2_crypto_level level_;
     QuicSession* session_;
     QuicSessionFlags monitor_;
   };
@@ -1004,33 +1017,11 @@ class QuicServerSession : public QuicSession {
 
  private:
   void DisassociateCID(const ngtcp2_cid* cid) override;
-  void InitTLS_Post() override;
   void RemoveFromSocket() override;
 
-  int TLSHandshake_Initial() override;
   int VerifyPeerIdentity(const char* hostname) override;
 
   bool StartClosingPeriod();
-
-  ngtcp2_crypto_level GetServerCryptoLevel() override {
-    return tx_crypto_level_;
-  }
-
-  ngtcp2_crypto_level GetClientCryptoLevel() override {
-    return rx_crypto_level_;
-  }
-
-  void SetServerCryptoLevel(ngtcp2_crypto_level level) override {
-    tx_crypto_level_ = level;
-  }
-
-  void SetClientCryptoLevel(ngtcp2_crypto_level level) override {
-    rx_crypto_level_ = level;
-  }
-
-  void SetLocalCryptoLevel(ngtcp2_crypto_level level) override {
-    SetServerCryptoLevel(level);
-  }
 
   ngtcp2_cid pscid_{};
   ngtcp2_cid rcid_;
@@ -1055,7 +1046,6 @@ class QuicClientSession : public QuicSession {
       const struct sockaddr* addr,
       uint32_t version,
       crypto::SecureContext* context,
-      const char* hostname,
       uint32_t port,
       v8::Local<v8::Value> early_transport_params,
       v8::Local<v8::Value> session_ticket,
@@ -1063,6 +1053,7 @@ class QuicClientSession : public QuicSession {
       SelectPreferredAddressPolicy select_preferred_address_policy =
           QUIC_PREFERRED_ADDRESS_IGNORE,
       const std::string& alpn = NGTCP2_ALPN_H3,
+      const std::string& hostname = "",
       uint32_t options = 0);
 
   QuicClientSession(
@@ -1071,13 +1062,13 @@ class QuicClientSession : public QuicSession {
       const struct sockaddr* addr,
       uint32_t version,
       crypto::SecureContext* context,
-      const char* hostname,
       uint32_t port,
       v8::Local<v8::Value> early_transport_params,
       v8::Local<v8::Value> session_ticket,
       v8::Local<v8::Value> dcid,
       SelectPreferredAddressPolicy select_preferred_address_policy,
       const std::string& alpn,
+      const std::string& hostname,
       uint32_t options);
 
   void AddToSocket(QuicSocket* socket) override;
@@ -1097,14 +1088,11 @@ class QuicClientSession : public QuicSession {
 
  private:
   void HandleError() override;
-  void InitTLS_Post() override;
   bool ReceiveRetry() override;
   bool SelectPreferredAddress(
     ngtcp2_addr* dest,
     const ngtcp2_preferred_addr* paddr) override;
   void StoreRemoteTransportParams(ngtcp2_transport_params* params) override;
-  bool TLSHandshake_Complete() override;
-  int TLSHandshake_Initial() override;
   int VerifyPeerIdentity(const char* hostname) override;
   void VersionNegotiation(
       const ngtcp2_pkt_hd* hd,
@@ -1119,30 +1107,9 @@ class QuicClientSession : public QuicSession {
       v8::Local<v8::Value> dcid);
   bool SetupInitialCryptoContext();
 
-  ngtcp2_crypto_level GetServerCryptoLevel() override {
-    return rx_crypto_level_;
-  }
-
-  ngtcp2_crypto_level GetClientCryptoLevel() override {
-    return tx_crypto_level_;
-  }
-
-  void SetServerCryptoLevel(ngtcp2_crypto_level level) override {
-    rx_crypto_level_ = level;
-  }
-
-  void SetClientCryptoLevel(ngtcp2_crypto_level level) override {
-    tx_crypto_level_ = level;
-  }
-
-  void SetLocalCryptoLevel(ngtcp2_crypto_level level) override {
-    SetClientCryptoLevel(level);
-  }
-
   uint32_t version_;
   uint32_t port_;
   SelectPreferredAddressPolicy select_preferred_address_policy_;
-  std::string hostname_;
 
   ngtcp2_transport_params transport_params_;
   bool has_transport_params_;

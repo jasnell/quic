@@ -88,23 +88,16 @@ void QuicInitSecureContext(const FunctionCallbackInfo<Value>& args) {
                             SSL_OP_CIPHER_SERVER_PREFERENCE |
                             SSL_OP_NO_ANTI_REPLAY;
   SSL_CTX_set_options(**sc, ssl_opts);
-  SSL_CTX_clear_options(**sc, SSL_OP_ENABLE_MIDDLEBOX_COMPAT);
-  SSL_CTX_set_mode(**sc, SSL_MODE_RELEASE_BUFFERS | SSL_MODE_QUIC_HACK);
+  SSL_CTX_set_mode(**sc, SSL_MODE_RELEASE_BUFFERS);
+  SSL_CTX_set_min_proto_version(**sc, TLS1_3_VERSION);
+  SSL_CTX_set_max_proto_version(**sc, TLS1_3_VERSION);
   SSL_CTX_set_default_verify_paths(**sc);
   SSL_CTX_set_max_early_data(**sc, std::numeric_limits<uint32_t>::max());
   SSL_CTX_set_alpn_select_cb(**sc, ALPN_Select_Proto_CB, nullptr);
   SSL_CTX_set_client_hello_cb(**sc, Client_Hello_CB, nullptr);
   SSL_CTX_set_tlsext_status_cb(**sc, TLS_Status_Callback);
   SSL_CTX_set_tlsext_status_arg(**sc, nullptr);
-  CHECK_EQ(
-      SSL_CTX_add_custom_ext(
-          **sc,
-          NGTCP2_TLSEXT_QUIC_TRANSPORT_PARAMETERS,
-          SSL_EXT_CLIENT_HELLO | SSL_EXT_TLS1_3_ENCRYPTED_EXTENSIONS,
-          Server_Transport_Params_Add_CB,
-          Transport_Params_Free_CB, nullptr,
-          Server_Transport_Params_Parse_CB,
-          nullptr), 1);
+  SetQuicMethod(**sc);
 
   const node::Utf8Value groups(env->isolate(), args[1]);
   if (!SSL_CTX_set1_groups_list(**sc, *groups)) {
@@ -123,22 +116,12 @@ void QuicInitSecureContextClient(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&sc, args[0].As<Object>(),
                           args.GetReturnValue().Set(UV_EBADF));
 
-  SSL_CTX_set_mode(**sc, SSL_MODE_QUIC_HACK);
-  SSL_CTX_clear_options(**sc, SSL_OP_ENABLE_MIDDLEBOX_COMPAT);
+  SSL_CTX_set_min_proto_version(**sc, TLS1_3_VERSION);
+  SSL_CTX_set_max_proto_version(**sc, TLS1_3_VERSION);
   SSL_CTX_set_default_verify_paths(**sc);
   SSL_CTX_set_tlsext_status_cb(**sc, TLS_Status_Callback);
   SSL_CTX_set_tlsext_status_arg(**sc, nullptr);
-
-  CHECK_EQ(SSL_CTX_add_custom_ext(
-      **sc,
-      NGTCP2_TLSEXT_QUIC_TRANSPORT_PARAMETERS,
-      SSL_EXT_CLIENT_HELLO | SSL_EXT_TLS1_3_ENCRYPTED_EXTENSIONS,
-      Client_Transport_Params_Add_CB,
-      Transport_Params_Free_CB,
-      nullptr,
-      Client_Transport_Params_Parse_CB,
-      nullptr), 1);
-
+  SetQuicMethod(**sc);
 
   const node::Utf8Value groups(env->isolate(), args[1]);
   if (!SSL_CTX_set1_groups_list(**sc, *groups)) {

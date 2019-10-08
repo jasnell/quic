@@ -8,6 +8,7 @@
 #include "v8.h"
 
 #include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -31,180 +32,6 @@ using v8::Value;
 
 namespace quic {
 
-namespace {
-int BIO_Write(BIO* b, const char* buf, int len) {
-  return -1;
-}
-
-int BIO_Read(BIO* b, char* buf, int len) {
-  BIO_clear_retry_flags(b);
-  QuicSession* session = static_cast<QuicSession*>(BIO_get_data(b));
-  len = session->ReadPeerHandshake(reinterpret_cast<uint8_t*>(buf), len);
-  if (len == 0) {
-    BIO_set_retry_read(b);
-    return -1;
-  }
-  return len;
-}
-
-int BIO_Puts(BIO* b, const char* str) {
-  return BIO_Write(b, str, strlen(str));
-}
-
-int BIO_Gets(BIO* b, char* buf, int len) {
-  return -1;
-}
-
-long BIO_Ctrl(  // NOLINT(runtime/int)
-    BIO* b,
-    int cmd,
-    long num,  // NOLINT(runtime/int)
-    void* ptr) {
-  return cmd == BIO_CTRL_FLUSH ? 1 : 0;
-}
-
-int BIO_Create(BIO* b) {
-  BIO_set_init(b, 1);
-  return 1;
-}
-
-int BIO_Destroy(BIO* b) {
-  return b == nullptr ? 0 : 1;
-}
-}  // namespace
-
-BIO_METHOD* CreateBIOMethod() {
-  static BIO_METHOD* method = nullptr;
-
-  if (method == nullptr) {
-    method = BIO_meth_new(BIO_TYPE_FD, "bio");
-    BIO_meth_set_write(method, BIO_Write);
-    BIO_meth_set_read(method, BIO_Read);
-    BIO_meth_set_puts(method, BIO_Puts);
-    BIO_meth_set_gets(method, BIO_Gets);
-    BIO_meth_set_ctrl(method, BIO_Ctrl);
-    BIO_meth_set_create(method, BIO_Create);
-    BIO_meth_set_destroy(method, BIO_Destroy);
-  }
-  return method;
-}
-
-namespace {
-// TODO(@jasnell): Replace with ngtcp2_crypto_ctx_initial once
-// we move to ngtcp2_crypto.h
-ngtcp2_crypto_ctx* ngtcp2_crypto_ctx_initial(ngtcp2_crypto_ctx* ctx) {
-  ctx->aead.native_handle =
-      const_cast<void*>(static_cast<const void*>(EVP_aes_128_gcm()));
-  ctx->hp.native_handle =
-      const_cast<void*>(static_cast<const void*>(EVP_aes_128_ctr()));
-  ctx->md.native_handle =
-      const_cast<void*>(static_cast<const void*>(EVP_sha256()));
-  return ctx;
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto.h
-const EVP_CIPHER* crypto_ssl_get_aead(SSL* ssl) {
-  switch (SSL_CIPHER_get_id(SSL_get_current_cipher(ssl))) {
-    case TLS1_3_CK_AES_128_GCM_SHA256:
-      return EVP_aes_128_gcm();
-    case TLS1_3_CK_AES_256_GCM_SHA384:
-      return EVP_aes_256_gcm();
-    case TLS1_3_CK_CHACHA20_POLY1305_SHA256:
-      return EVP_chacha20_poly1305();
-    case TLS1_3_CK_AES_128_CCM_SHA256:
-      return EVP_aes_128_ccm();
-    default:
-      return nullptr;
-  }
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto.h
-const EVP_CIPHER* crypto_ssl_get_hp(SSL* ssl) {
-  switch (SSL_CIPHER_get_id(SSL_get_current_cipher(ssl))) {
-    case TLS1_3_CK_AES_128_GCM_SHA256:
-    case TLS1_3_CK_AES_128_CCM_SHA256:
-      return EVP_aes_128_ctr();
-    case TLS1_3_CK_AES_256_GCM_SHA384:
-      return EVP_aes_256_ctr();
-    case TLS1_3_CK_CHACHA20_POLY1305_SHA256:
-      return EVP_chacha20();
-    default:
-      return nullptr;
-  }
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto.h
-const EVP_MD* crypto_ssl_get_md(SSL* ssl) {
-  switch (SSL_CIPHER_get_id(SSL_get_current_cipher(ssl))) {
-    case TLS1_3_CK_AES_128_GCM_SHA256:
-    case TLS1_3_CK_CHACHA20_POLY1305_SHA256:
-    case TLS1_3_CK_AES_128_CCM_SHA256:
-      return EVP_sha256();
-    case TLS1_3_CK_AES_256_GCM_SHA384:
-      return EVP_sha384();
-    default:
-      return nullptr;
-  }
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_ctx_tls once
-// we move to ngtcp2_crypto
-ngtcp2_crypto_ctx* ngtcp2_crypto_ctx_tls(ngtcp2_crypto_ctx* ctx, SSL* ssl) {
-  ctx->aead.native_handle =
-      const_cast<void*>(static_cast<const void*>(crypto_ssl_get_aead(ssl)));
-  ctx->md.native_handle =
-      const_cast<void*>(static_cast<const void*>(crypto_ssl_get_md(ssl)));
-  ctx->hp.native_handle =
-      const_cast<void*>(static_cast<const void*>(crypto_ssl_get_hp(ssl)));
-  return ctx;
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_aead_keylen once
-// we move to ngtcp2_crypto.h
-size_t aead_key_length(const ngtcp2_crypto_aead* aead) {
-  const EVP_CIPHER* cipher =
-      static_cast<const EVP_CIPHER*>(aead->native_handle);
-  DCHECK_NOT_NULL(cipher);
-  return static_cast<size_t>(EVP_CIPHER_key_length(cipher));
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_aead_noncelen once
-// we move to ngtcp2_crypto.h
-size_t aead_nonce_length(const ngtcp2_crypto_aead* aead) {
-  const EVP_CIPHER* cipher =
-      static_cast<const EVP_CIPHER*>(aead->native_handle);
-  DCHECK_NOT_NULL(cipher);
-  return static_cast<size_t>(EVP_CIPHER_iv_length(cipher));
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_packet_protection_ivlen
-// once we move to ngtcp2_crypto.h
-size_t packet_protection_ivlen(const ngtcp2_crypto_ctx* ctx) {
-  size_t noncelen = aead_nonce_length(&ctx->aead);
-  return std::max(static_cast<size_t>(8), noncelen);
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_aead_taglen once
-// we move to ngtcp2_crypto.h
-size_t aead_tag_length(const ngtcp2_crypto_aead* aead) {
-  const EVP_CIPHER* cipher =
-      static_cast<const EVP_CIPHER*>(aead->native_handle);
-  DCHECK_NOT_NULL(cipher);
-  if (cipher == EVP_aes_128_gcm() ||
-      cipher == EVP_aes_256_gcm()) {
-    return EVP_GCM_TLS_TAG_LEN;
-  }
-  if (cipher == EVP_chacha20_poly1305()) {
-    return EVP_CHACHAPOLY_TLS_TAG_LEN;
-  }
-  if (cipher == EVP_aes_128_ccm()) {
-    return EVP_CCM_TLS_TAG_LEN;
-  }
-  return 0;
-}
-
-}  // namespace
-
 const ngtcp2_crypto_ctx* GetCryptoContext(ngtcp2_conn* conn, SSL* ssl) {
   const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(conn);
   // ctx will always be non-null, so check members
@@ -213,7 +40,7 @@ const ngtcp2_crypto_ctx* GetCryptoContext(ngtcp2_conn* conn, SSL* ssl) {
     ngtcp2_crypto_ctx_tls(&context, ssl);
     ngtcp2_conn_set_crypto_ctx(conn, &context);
     ctx = ngtcp2_conn_get_crypto_ctx(conn);
-    ngtcp2_conn_set_aead_overhead(conn, aead_tag_length(&context.aead));
+    ngtcp2_conn_set_aead_overhead(conn, ngtcp2_crypto_aead_taglen(&context.aead));
   }
   return ctx;
 }
@@ -230,500 +57,6 @@ const ngtcp2_crypto_ctx* GetInitialCryptoContext(ngtcp2_conn* conn) {
   return ctx;
 }
 
-// TODO(@jasnell): Replace with ngtcp2_crypto_hkdf_extract once
-// we move to ngtcp2_crypto
-bool HKDF_Extract(
-    uint8_t* dest,
-    size_t destlen,
-    const ngtcp2_crypto_md* md,
-    const uint8_t* secret,
-    size_t secretlen,
-    const uint8_t* salt,
-    size_t saltlen) {
-  PKeyCtxPointer pctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
-  return
-      pctx &&
-      EVP_PKEY_derive_init(pctx.get()) == 1 &&
-      EVP_PKEY_CTX_hkdf_mode(
-          pctx.get(),
-          EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY) == 1 &&
-      EVP_PKEY_CTX_set_hkdf_md(pctx.get(), md->native_handle) == 1 &&
-      EVP_PKEY_CTX_set1_hkdf_salt(pctx.get(), salt, saltlen) == 1 &&
-      EVP_PKEY_CTX_set1_hkdf_key(pctx.get(), secret, secretlen) == 1 &&
-      EVP_PKEY_derive(pctx.get(), dest, &destlen) == 1;
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-bool HKDF_Expand(
-    uint8_t* dest,
-    size_t destlen,
-    const ngtcp2_crypto_md* md,
-    const uint8_t* secret,
-    size_t secretlen,
-    const uint8_t* info,
-    size_t infolen) {
-  PKeyCtxPointer pctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
-
-  return
-      pctx &&
-      EVP_PKEY_derive_init(pctx.get()) == 1 &&
-      EVP_PKEY_CTX_hkdf_mode(
-          pctx.get(),
-          EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) == 1 &&
-      EVP_PKEY_CTX_set_hkdf_md(pctx.get(), md->native_handle) == 1 &&
-      EVP_PKEY_CTX_set1_hkdf_salt(pctx.get(), "", 0) == 1 &&
-      EVP_PKEY_CTX_set1_hkdf_key(pctx.get(), secret, secretlen) == 1 &&
-      EVP_PKEY_CTX_add1_hkdf_info(pctx.get(), info, infolen) == 1 &&
-      EVP_PKEY_derive(pctx.get(), dest, &destlen) == 1;
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_hkdf_expand_label
-// once we move to ngtcp2_crypto
-bool HKDF_Expand_Label(
-    uint8_t* dest,
-    size_t destlen,
-    const ngtcp2_crypto_md* md,
-    const uint8_t* secret,
-    size_t secretlen,
-    const uint8_t* label,
-    size_t labellen) {
-  static const uint8_t LABEL[] = "tls13 ";
-  uint8_t info[256];
-  uint8_t* p = info;
-
-  *p++ = static_cast<uint8_t>(destlen / 256);
-  *p++ = static_cast<uint8_t>(destlen % 256);
-  *p++ = static_cast<uint8_t>(sizeof(LABEL) - 1 + labellen);
-  memcpy(p, LABEL, sizeof(LABEL) - 1);
-  p += sizeof(LABEL) - 1;
-  memcpy(p, label, labellen);
-  p += labellen;
-  *p++ = 0;
-
-  return HKDF_Expand(
-      dest,
-      destlen,
-      md,
-      secret,
-      secretlen,
-      info,
-      static_cast<size_t>(p - info));
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_encrypt once
-// we move to ngtcp2_crypto
-bool Encrypt(
-    uint8_t* dest,
-    const ngtcp2_crypto_aead* aead,
-    const uint8_t* plaintext,
-    size_t plaintextlen,
-    const uint8_t* key,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen) {
-  size_t taglen = aead_tag_length(aead);
-  const EVP_CIPHER* cipher =
-      static_cast<const EVP_CIPHER*>(aead->native_handle);
-  CHECK_NOT_NULL(cipher);
-
-
-  CipherCtxPointer actx(EVP_CIPHER_CTX_new());
-  CHECK(actx);
-
-  int len;
-
-  if (EVP_EncryptInit_ex(
-          actx.get(),
-          cipher,
-          nullptr,
-          nullptr,
-          nullptr) != 1 ||
-      EVP_CIPHER_CTX_ctrl(
-          actx.get(),
-          EVP_CTRL_AEAD_SET_IVLEN,
-          noncelen,
-          nullptr) != 1 ||
-      EVP_EncryptInit_ex(
-          actx.get(),
-          nullptr,
-          nullptr,
-          key,
-          nonce) != 1 ||
-      EVP_EncryptUpdate(
-          actx.get(),
-          nullptr,
-          &len,
-          ad,
-          adlen) != 1 ||
-      EVP_EncryptUpdate(
-          actx.get(),
-          dest,
-          &len,
-          plaintext,
-          plaintextlen) != 1) {
-    return false;
-  }
-
-  dest += len;
-
-  if (EVP_EncryptFinal_ex(
-          actx.get(),
-          dest,
-          &len) != 1) {
-    return false;
-  }
-
-  dest += len;
-
-  if (EVP_CIPHER_CTX_ctrl(
-          actx.get(),
-          EVP_CTRL_AEAD_GET_TAG,
-          taglen,
-          dest) != 1) {
-    return false;
-  }
-
-  return true;
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_decrypt once
-// we move to ngtcp2_crypto
-bool Decrypt(
-    uint8_t* dest,
-    const ngtcp2_crypto_aead* aead,
-    const uint8_t* ciphertext,
-    size_t ciphertextlen,
-    const uint8_t* key,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen) {
-  size_t taglen = aead_tag_length(aead);
-  const EVP_CIPHER* cipher =
-      static_cast<const EVP_CIPHER*>(aead->native_handle);
-  DCHECK_NOT_NULL(cipher);
-
-  ciphertextlen -= taglen;
-  auto tag = ciphertext + ciphertextlen;
-
-  CipherCtxPointer actx(EVP_CIPHER_CTX_new());
-  CHECK(actx);
-
-  int len;
-
-  return
-      EVP_DecryptInit_ex(
-          actx.get(),
-          cipher,
-          nullptr,
-          nullptr,
-          nullptr) == 1 &&
-      EVP_CIPHER_CTX_ctrl(
-          actx.get(),
-          EVP_CTRL_AEAD_SET_IVLEN,
-          noncelen,
-          nullptr) == 1 &&
-      EVP_DecryptInit_ex(
-          actx.get(),
-          nullptr,
-          nullptr,
-          key,
-          nonce) == 1 &&
-      EVP_DecryptUpdate(
-          actx.get(),
-          nullptr,
-          &len,
-          ad,
-          adlen) == 1 &&
-      EVP_DecryptUpdate(
-          actx.get(),
-          dest,
-          &len,
-          ciphertext,
-          ciphertextlen) == 1 &&
-      EVP_CIPHER_CTX_ctrl(
-          actx.get(),
-          EVP_CTRL_AEAD_SET_TAG,
-          taglen,
-          const_cast<uint8_t *>(tag)) == 1 &&
-      EVP_DecryptFinal_ex(
-          actx.get(),
-          dest + len,
-          &len) == 1;
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_hp_mask once
-// we move to ngtcp2_crypto
-bool HP_Mask(
-    uint8_t* dest,
-    const ngtcp2_crypto_cipher* hp,
-    const uint8_t* key,
-    const uint8_t* sample) {
-  static constexpr uint8_t PLAINTEXT[] = "\x00\x00\x00\x00\x00";
-
-  DeleteFnPtr<EVP_CIPHER_CTX, EVP_CIPHER_CTX_free> actx;
-  actx.reset(EVP_CIPHER_CTX_new());
-  CHECK(actx);
-
-  const EVP_CIPHER* cipher =
-      static_cast<const EVP_CIPHER*>(hp->native_handle);
-  DCHECK_NOT_NULL(cipher);
-
-  int len;
-
-  return
-      EVP_EncryptInit_ex(
-          actx.get(),
-          cipher,
-          nullptr,
-          key,
-          sample) == 1 &&
-      EVP_EncryptUpdate(
-          actx.get(),
-          dest,
-          &len,
-          PLAINTEXT,
-          strsize(PLAINTEXT)) == 1 &&
-      EVP_EncryptFinal_ex(
-          actx.get(),
-          dest + len,
-          &len) == 1;
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-bool DeriveInitialSecrets(
-    uint8_t* rx_secret,
-    uint8_t* tx_secret,
-    uint8_t* initial_secret,
-    const ngtcp2_cid* dcid,
-    ngtcp2_crypto_side side) {
-
-  static const uint8_t CLABEL[] = "client in";
-  static const uint8_t SLABEL[] = "server in";
-  uint8_t initial_secret_buf[NGTCP2_CRYPTO_INITIAL_SECRETLEN];
-  uint8_t* client_secret;
-  uint8_t* server_secret;
-
-  ngtcp2_crypto_ctx ctx;
-  ngtcp2_crypto_ctx_initial(&ctx);
-
-  if (!initial_secret)
-    initial_secret = initial_secret_buf;
-
-
-  if (!HKDF_Extract(
-          initial_secret,
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN,
-          &ctx.md,
-          dcid->data,
-          dcid->datalen,
-          reinterpret_cast<const uint8_t *>(NGTCP2_INITIAL_SALT),
-          sizeof(NGTCP2_INITIAL_SALT) - 1)) {
-    return false;
-  }
-
-  switch (side) {
-    case NGTCP2_CRYPTO_SIDE_SERVER:
-      client_secret = rx_secret;
-      server_secret = tx_secret;
-      break;
-    case NGTCP2_CRYPTO_SIDE_CLIENT:
-      client_secret = tx_secret;
-      server_secret = rx_secret;
-      break;
-    default:
-      UNREACHABLE();
-  }
-
-  return
-      HKDF_Expand_Label(
-          client_secret,
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN,
-          &ctx.md,
-          initial_secret,
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN,
-          CLABEL,
-          sizeof(CLABEL) - 1) &&
-      HKDF_Expand_Label(
-          server_secret,
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN,
-          &ctx.md,
-          initial_secret,
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN,
-          SLABEL,
-          sizeof(SLABEL) - 1);
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-bool DerivePacketProtectionKey(
-    uint8_t* key,
-    uint8_t* iv,
-    uint8_t* hp_key,
-    const ngtcp2_crypto_ctx* ctx,
-    const uint8_t* secret,
-    size_t secretlen) {
-  static const uint8_t KEY_LABEL[] = "quic key";
-  static const uint8_t IV_LABEL[] = "quic iv";
-  static const uint8_t HP_KEY_LABEL[] = "quic hp";
-
-  CHECK_NOT_NULL(ctx);
-  CHECK_NOT_NULL(ctx->aead.native_handle);
-  CHECK_NOT_NULL(ctx->md.native_handle);
-
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-
-  return
-      HKDF_Expand_Label(
-          key,
-          keylen,
-          &ctx->md,
-          secret,
-          secretlen,
-          KEY_LABEL,
-          sizeof(KEY_LABEL) - 1) &&
-      HKDF_Expand_Label(
-          iv,
-          ivlen,
-          &ctx->md,
-          secret,
-          secretlen,
-          IV_LABEL,
-          sizeof(IV_LABEL) - 1) &&
-      (hp_key == nullptr ||
-       HKDF_Expand_Label(
-          hp_key,
-          keylen,
-          &ctx->md,
-          secret,
-          secretlen,
-          HP_KEY_LABEL,
-          sizeof(HP_KEY_LABEL) - 1));
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_derive_and_install_initial_key
-// once we move to ngtcp2_crypto
-bool DeriveAndInstallInitialKey(
-    ngtcp2_conn* conn,
-    const ngtcp2_crypto_ctx* ctx,
-    const ngtcp2_cid* dcid,
-    ngtcp2_crypto_side side) {
-  InitialSecret rx_secret;
-  InitialSecret tx_secret;
-  InitialKey rx_key;
-  InitialKey tx_key;
-  InitialIV rx_iv;
-  InitialIV tx_iv;
-  InitialKey rx_hp;
-  InitialKey tx_hp;
-
-  CHECK_NOT_NULL(ctx);
-
-  return
-      DeriveInitialSecrets(
-          rx_secret.data(),
-          tx_secret.data(),
-          nullptr,
-          dcid,
-          side) &&
-      DerivePacketProtectionKey(
-          rx_key.data(),
-          rx_iv.data(),
-          rx_hp.data(),
-          ctx,
-          rx_secret.data(),
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN) &&
-      DerivePacketProtectionKey(
-          tx_key.data(),
-          tx_iv.data(),
-          tx_hp.data(),
-          ctx,
-          tx_secret.data(),
-          NGTCP2_CRYPTO_INITIAL_SECRETLEN) &&
-      ngtcp2_conn_install_initial_key(
-          conn,
-          rx_key.data(),
-          rx_iv.data(),
-          rx_hp.data(),
-          tx_key.data(),
-          tx_iv.data(),
-          tx_hp.data(),
-          NGTCP2_CRYPTO_INITIAL_KEYLEN,
-          NGTCP2_CRYPTO_INITIAL_IVLEN) == 0;
-}
-
-// TODO(@jasnell): Remove once we move to ngtcp2_crypto
-bool UpdateTrafficSecret(
-    SessionSecret* dest,
-    std::vector<uint8_t>* secret,
-    const ngtcp2_crypto_ctx* ctx) {
-
-  static constexpr uint8_t LABEL[] = "traffic upd";
-
-  CHECK_GE(dest->size(), secret->size());
-
-  return HKDF_Expand_Label(
-    dest->data(),
-    secret->size(),
-    &ctx->md,
-    secret->data(),
-    secret->size(),
-    LABEL,
-    strsize(LABEL));
-}
-
-// TODO(@jasnell): Replace with ngtcp2_crypto_update_and_install_key
-// once we move to ngtcp2_crypto
-bool UpdateAndInstallKey(
-    ngtcp2_conn* conn,
-    std::vector<uint8_t>* current_rx_secret,
-    std::vector<uint8_t>* current_tx_secret,
-    size_t secretlen) {
-  SessionSecret rx_secret;
-  SessionSecret tx_secret;
-  SessionKey rx_key;
-  SessionIV rx_iv;
-  SessionKey tx_key;
-  SessionIV tx_iv;
-
-  const ngtcp2_crypto_ctx* ctx = ngtcp2_conn_get_crypto_ctx(conn);
-
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-
-  if (!UpdateTrafficSecret(&rx_secret, current_rx_secret, ctx) ||
-      !DerivePacketProtectionKey(
-          rx_key.data(),
-          rx_iv.data(),
-          nullptr,
-          ctx,
-          rx_secret.data(),
-          secretlen) ||
-      !UpdateTrafficSecret(&tx_secret, current_tx_secret, ctx) ||
-      !DerivePacketProtectionKey(
-          tx_key.data(),
-          tx_iv.data(),
-          nullptr,
-          ctx,
-          tx_secret.data(),
-          secretlen)) {
-    return false;
-  }
-
-  current_rx_secret->assign(std::begin(rx_secret), std::end(rx_secret));
-  current_tx_secret->assign(std::begin(tx_secret), std::end(tx_secret));
-
-  return ngtcp2_conn_update_key(
-      conn,
-      rx_key.data(),
-      rx_iv.data(),
-      tx_key.data(),
-      tx_iv.data(),
-      keylen,
-      ivlen) == 0;
-}
-
 bool DeriveTokenKey(
     uint8_t* token_key,
     uint8_t* token_iv,
@@ -734,21 +67,22 @@ bool DeriveTokenKey(
   TokenSecret secret;
 
   return
-      HKDF_Extract(
+      NGTCP2_OK(ngtcp2_crypto_hkdf_extract(
           secret.data(),
           secret.size(),
           &ctx->md,
           token_secret->data(),
           token_secret->size(),
           rand_data,
-          rand_datalen) &&
-      DerivePacketProtectionKey(
+          rand_datalen)) &&
+      NGTCP2_OK(ngtcp2_crypto_derive_packet_protection_key(
           token_key,
           token_iv,
           nullptr,
-          ctx,
+          &ctx->aead,
+          &ctx->md,
           secret.data(),
-          secret.size());
+          secret.size()));
 }
 
 bool MessageDigest(
@@ -783,138 +117,16 @@ bool GenerateRandData(uint8_t* buf, size_t len) {
   return true;
 }
 
-void ClearTLSError() {
-  ERR_clear_error();
-}
-
-const char* TLSErrorString(int code) {
-  return ERR_error_string(code, nullptr);
-}
-
-bool InstallEarlyKeys(
-    ngtcp2_conn* conn,
-    const ngtcp2_crypto_ctx* ctx,
-    const uint8_t* secret,
-    size_t secretlen) {
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-  SessionKey key;
-  SessionIV iv;
-  SessionKey hp;
-  return
-      DerivePacketProtectionKey(
-          key.data(),
-          iv.data(),
-          hp.data(),
-          ctx,
-          secret,
-          secretlen) &&
-      ngtcp2_conn_install_early_key(
-          conn,
-          key.data(),
-          iv.data(),
-          hp.data(),
-          keylen,
-          ivlen) == 0;
-}
-
-bool InstallHandshakeKeys(
-    ngtcp2_conn* conn,
-    const ngtcp2_crypto_ctx* ctx,
-    std::unique_ptr<KeyStorage> ks) {
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-  return ngtcp2_conn_install_handshake_key(
-      conn,
-      ks->rx_key.data(),
-      ks->rx_iv.data(),
-      ks->rx_hp.data(),
-      ks->tx_key.data(),
-      ks->tx_iv.data(),
-      ks->tx_hp.data(),
-      keylen,
-      ivlen) == 0;
-}
-
-bool InstallSessionKeys(
-    ngtcp2_conn* conn,
-    const ngtcp2_crypto_ctx* ctx,
-    std::unique_ptr<KeyStorage> ks) {
-  size_t keylen = aead_key_length(&ctx->aead);
-  size_t ivlen = packet_protection_ivlen(ctx);
-  return ngtcp2_conn_install_key(
-      conn,
-      ks->rx_key.data(),
-      ks->rx_iv.data(),
-      ks->rx_hp.data(),
-      ks->tx_key.data(),
-      ks->tx_iv.data(),
-      ks->tx_hp.data(),
-      keylen,
-      ivlen) == 0;
-}
-
-// MessageCB provides a hook into the TLS handshake dataflow. Currently, it
-// is used to capture TLS alert codes (errors) and to collect the TLS handshake
-// data that is to be sent.
-void MessageCB(
-    int write_p,
-    int version,
-    int content_type,
-    const void* buf,
-    size_t len,
-    SSL* ssl,
-    void* arg) {
-  if (!write_p)
-    return;
-
-  QuicSession* session = static_cast<QuicSession*>(arg);
-
-  switch (content_type) {
-    case SSL3_RT_HANDSHAKE: {
-      session->WriteHandshake(reinterpret_cast<const uint8_t*>(buf), len);
-      break;
-    }
-    case SSL3_RT_ALERT: {
-      const uint8_t* msg = reinterpret_cast<const uint8_t*>(buf);
-      CHECK_EQ(len, 2);
-      if (msg[0] == 2)
-        session->SetTLSAlert(msg[1]);
-      break;
-    }
-  }
-}
-
 void LogSecret(
     SSL* ssl,
-    int name,
+    const char* name,
     const unsigned char* secret,
     size_t secretlen) {
   if (auto keylog_cb = SSL_CTX_get_keylog_callback(SSL_get_SSL_CTX(ssl))) {
     unsigned char crandom[32];
     if (SSL_get_client_random(ssl, crandom, 32) != 32)
       return;
-    std::string line;
-    switch (name) {
-      case SSL_KEY_CLIENT_EARLY_TRAFFIC:
-        line = "QUIC_CLIENT_EARLY_TRAFFIC_SECRET";
-        break;
-      case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
-        line = "QUIC_CLIENT_HANDSHAKE_TRAFFIC_SECRET";
-        break;
-      case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
-        line = "QUIC_CLIENT_TRAFFIC_SECRET_0";
-        break;
-      case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
-        line = "QUIC_SERVER_HANDSHAKE_TRAFFIC_SECRET";
-        break;
-      case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
-        line = "QUIC_SERVER_TRAFFIC_SECRET_0";
-        break;
-      default:
-        return;
-    }
-
+    std::string line = name;
     line += " " + StringBytes::hex_encode(
         reinterpret_cast<const char*>(crandom), 32);
     line += " " + StringBytes::hex_encode(
@@ -926,66 +138,6 @@ void LogSecret(
 int CertCB(SSL* ssl, void* arg) {
   QuicSession* session = static_cast<QuicSession*>(arg);
   return session->OnCert();
-}
-
-// KeyCB provides a hook into the keying process of the TLS handshake,
-// triggering registration of the keys associated with the TLS session.
-int KeyCB(
-    SSL* ssl,
-    int name,
-    const unsigned char* secret,
-    size_t secretlen,
-    void* arg) {
-  QuicSession* session = static_cast<QuicSession*>(arg);
-
-  // Output the secret to the keylog
-  LogSecret(ssl, name, secret, secretlen);
-
-  return session->OnKey(name, secret, secretlen) ? 1 : 0;
-}
-
-int HandleTLSError(SSL* ssl, int err = 0) {
-  int code = SSL_get_error(ssl, err);
-  switch (code) {
-    case SSL_ERROR_WANT_READ:
-    case SSL_ERROR_WANT_WRITE:
-    case SSL_ERROR_WANT_CLIENT_HELLO_CB:
-    case SSL_ERROR_WANT_X509_LOOKUP:
-      return 0;
-    case SSL_ERROR_SSL:
-    case SSL_ERROR_ZERO_RETURN:
-    default:
-      return NGTCP2_ERR_CRYPTO;
-  }
-}
-
-bool ClearTLS(SSL* ssl) {
-  std::array<uint8_t, 4096> buf;
-  size_t nread;
-  for (;;) {
-    int err = SSL_read_ex(ssl, buf.data(), buf.size(), &nread);
-    if (err <= 0)
-      return HandleTLSError(ssl, err) == 0;
-  }
-  return true;
-}
-
-int DoTLSHandshake(SSL* ssl) {
-  int err = SSL_do_handshake(ssl);
-  return err <= 0 ? HandleTLSError(ssl, err) : err;
-}
-
-int DoTLSReadEarlyData(SSL* ssl) {
-  std::array<uint8_t, 8> buf;
-  size_t nread;
-  int err = SSL_read_early_data(ssl, buf.data(), buf.size(), &nread);
-  switch (err) {
-    case SSL_READ_EARLY_DATA_ERROR:
-      return HandleTLSError(ssl, err);
-    case SSL_READ_EARLY_DATA_SUCCESS:
-      return nread > 0 ? NGTCP2_ERR_PROTO : 0;
-  }
-  return 0;
 }
 
 Local<Array> GetClientHelloCiphers(
@@ -1129,153 +281,9 @@ int ALPN_Select_Proto_CB(
   return SSL_TLSEXT_ERR_OK;
 }
 
-int Client_Transport_Params_Add_CB(
-    SSL* ssl,
-    unsigned int ext_type,
-    unsigned int context,
-    const unsigned char** out,
-    size_t* outlen,
-    X509* x,
-    size_t chainidx,
-    int* al,
-    void* add_arg) {
-  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
-
-  ngtcp2_transport_params params;
-  session->GetLocalTransportParams(&params);
-
-  constexpr size_t bufsize = 64;
-  auto buf = std::make_unique<uint8_t[]>(bufsize);
-
-  auto nwrite = ngtcp2_encode_transport_params(
-      buf.get(), bufsize,
-      NGTCP2_TRANSPORT_PARAMS_TYPE_CLIENT_HELLO,
-      &params);
-  if (nwrite < 0) {
-    // Error encoding transport params
-    *al = SSL_AD_INTERNAL_ERROR;
-    return -1;
-  }
-
-  *out = buf.release();
-  *outlen = static_cast<size_t>(nwrite);
-
-  return 1;
-}
-
 int TLS_Status_Callback(SSL* ssl, void* arg) {
   QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
   return session->OnTLSStatus();
-}
-
-int Server_Transport_Params_Add_CB(
-    SSL* ssl,
-    unsigned int ext_type,
-    unsigned int context,
-    const unsigned char** out,
-    size_t* outlen,
-    X509* x,
-    size_t chainidx,
-    int* al,
-    void* add_arg) {
-  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
-
-  ngtcp2_transport_params params;
-  session->GetLocalTransportParams(&params);
-
-  constexpr size_t bufsize = 512;
-
-  auto buf = std::make_unique<uint8_t[]>(bufsize);
-
-  ssize_t nwrite = ngtcp2_encode_transport_params(
-      buf.get(), bufsize,
-      NGTCP2_TRANSPORT_PARAMS_TYPE_ENCRYPTED_EXTENSIONS,
-      &params);
-  if (nwrite < 0) {
-    // Error encoding transport params
-    *al = SSL_AD_INTERNAL_ERROR;
-    return -1;
-  }
-
-  *out = buf.release();
-  *outlen = static_cast<size_t>(nwrite);
-
-  return 1;
-}
-
-void Transport_Params_Free_CB(
-    SSL* ssl,
-    unsigned int ext_type,
-    unsigned int context,
-    const unsigned char* out,
-    void* add_arg) {
-  delete[] reinterpret_cast<const uint8_t*>(out);
-}
-
-int Client_Transport_Params_Parse_CB(
-    SSL* ssl,
-    unsigned int ext_type,
-    unsigned int context,
-    const unsigned char* in,
-    size_t inlen,
-    X509* x,
-    size_t chainidx,
-    int* al,
-    void* parse_arg) {
-  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
-
-  ngtcp2_transport_params params;
-
-  if (ngtcp2_decode_transport_params(
-          &params,
-          NGTCP2_TRANSPORT_PARAMS_TYPE_ENCRYPTED_EXTENSIONS,
-          in, inlen) != 0) {
-    *al = SSL_AD_ILLEGAL_PARAMETER;
-    return -1;
-  }
-
-  if (session->SetRemoteTransportParams(&params) != 0) {
-    *al = SSL_AD_ILLEGAL_PARAMETER;
-    return -1;
-  }
-
-  return 1;
-}
-
-int Server_Transport_Params_Parse_CB(
-    SSL* ssl,
-    unsigned int ext_type,
-    unsigned int context,
-    const unsigned char* in,
-    size_t inlen,
-    X509* x,
-    size_t chainidx,
-    int* al,
-    void* parse_arg) {
-  if (context != SSL_EXT_CLIENT_HELLO) {
-    *al = SSL_AD_ILLEGAL_PARAMETER;
-    return -1;
-  }
-
-  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
-
-  ngtcp2_transport_params params;
-
-  if (ngtcp2_decode_transport_params(
-          &params,
-          NGTCP2_TRANSPORT_PARAMS_TYPE_CLIENT_HELLO,
-          in, inlen) != 0) {
-    // Error decoding transport params
-    *al = SSL_AD_ILLEGAL_PARAMETER;
-    return -1;
-  }
-
-  if (session->SetRemoteTransportParams(&params) != 0) {
-    *al = SSL_AD_ILLEGAL_PARAMETER;
-    return -1;
-  }
-
-  return 1;
 }
 
 bool GenerateRetryToken(
@@ -1290,7 +298,7 @@ bool GenerateRetryToken(
   ngtcp2_crypto_ctx_initial(&ctx);
 
   const size_t addrlen = SocketAddress::GetAddressLen(addr);
-  size_t ivlen = packet_protection_ivlen(&ctx);
+  size_t ivlen = ngtcp2_crypto_packet_protection_ivlen(&ctx.aead);
 
   uint64_t now = uv_hrtime();
 
@@ -1317,7 +325,7 @@ bool GenerateRetryToken(
   }
 
   size_t plaintextlen = std::distance(std::begin(plaintext), p);
-  if (!Encrypt(
+  if (NGTCP2_ERR(ngtcp2_crypto_encrypt(
           token,
           &ctx.aead,
           plaintext.data(),
@@ -1326,11 +334,11 @@ bool GenerateRetryToken(
           token_iv.data(),
           ivlen,
           reinterpret_cast<const uint8_t *>(addr),
-          addrlen)) {
+          addrlen))) {
     return false;
   }
 
-  tokenlen = plaintextlen + aead_tag_length(&ctx.aead);
+  tokenlen = plaintextlen + ngtcp2_crypto_aead_taglen(&ctx.aead);
   memcpy(token + tokenlen, rand_data.data(), rand_data.size());
   tokenlen += rand_data.size();
   return true;
@@ -1347,7 +355,7 @@ bool InvalidRetryToken(
   ngtcp2_crypto_ctx ctx;
   ngtcp2_crypto_ctx_initial(&ctx);
 
-  size_t ivlen = packet_protection_ivlen(&ctx);
+  size_t ivlen = ngtcp2_crypto_packet_protection_ivlen(&ctx.aead);
   const size_t addrlen = SocketAddress::GetAddressLen(addr);
 
   if (hd->tokenlen < TOKEN_RAND_DATALEN)
@@ -1372,7 +380,7 @@ bool InvalidRetryToken(
 
   std::array<uint8_t, 4096> plaintext;
 
-  if (!Decrypt(
+  if (NGTCP2_ERR(ngtcp2_crypto_decrypt(
           plaintext.data(),
           &ctx.aead,
           ciphertext,
@@ -1380,11 +388,11 @@ bool InvalidRetryToken(
           token_key.data(),
           token_iv.data(),
           ivlen,
-          reinterpret_cast<const uint8_t*>(addr), addrlen)) {
+          reinterpret_cast<const uint8_t*>(addr), addrlen))) {
     return true;
   }
 
-  size_t plaintextlen = ciphertextlen - aead_tag_length(&ctx.aead);
+  size_t plaintextlen = ciphertextlen - ngtcp2_crypto_aead_taglen(&ctx.aead);
   if (plaintextlen < addrlen + sizeof(uint64_t))
     return true;
 
@@ -1795,6 +803,120 @@ Local<Value> GetCipherVersion(Environment* env, SSL* ssl) {
     version = OneByteString(env->isolate(), cipher_version);
   }
   return version;
+}
+
+namespace {
+int SetEncryptionSecrets(
+    SSL* ssl,
+    OSSL_ENCRYPTION_LEVEL ossl_level,
+    const uint8_t* read_secret,
+    const uint8_t* write_secret,
+    size_t secret_len) {
+  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
+  return session->OnSecrets(
+      from_ossl_level(ossl_level),
+      read_secret,
+      write_secret,
+      secret_len) ? 1 : 0;
+}
+
+int AddHandshakeData(
+    SSL* ssl,
+    OSSL_ENCRYPTION_LEVEL ossl_level,
+    const uint8_t* data,
+    size_t len) {
+  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
+  session->WriteHandshake(from_ossl_level(ossl_level), data, len);
+  return 1;
+}
+
+int FlushFlight(SSL *ssl) { return 1; }
+
+int SendAlert(
+    SSL* ssl,
+    enum ssl_encryption_level_t level,
+    uint8_t alert) {
+  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
+  session->SetTLSAlert(alert);
+  return 1;
+}
+
+SSL_QUIC_METHOD quic_method = SSL_QUIC_METHOD{
+  SetEncryptionSecrets,
+  AddHandshakeData,
+  FlushFlight,
+  SendAlert
+};
+}  // namespace
+
+void SetQuicMethod(SSL_CTX* ctx) {
+  SSL_CTX_set_quic_method(ctx, &quic_method);
+}
+
+namespace {
+void SetALPN(SSL* ssl, const std::string& alpn) {
+  SSL_set_alpn_protos(
+      ssl,
+      reinterpret_cast<const uint8_t*>(alpn.c_str()),
+      alpn.length());
+}
+
+void SetHostname(SSL* ssl, const std::string& hostname) {
+  if (hostname.length() == 0 ||
+      SocketAddress::numeric_host(hostname.c_str())) {
+    SSL_set_tlsext_host_name(ssl, "localhost");
+  } else {
+    SSL_set_tlsext_host_name(ssl, hostname.c_str());
+  }
+}
+
+bool SetTransportParams(ngtcp2_conn* connection, SSL* ssl) {
+  ngtcp2_transport_params params;
+  ngtcp2_conn_get_local_transport_params(connection, &params);
+  std::array<uint8_t, 512> buf;
+  ssize_t nwrite = ngtcp2_encode_transport_params(
+      buf.data(),
+      buf.size(),
+      NGTCP2_TRANSPORT_PARAMS_TYPE_ENCRYPTED_EXTENSIONS,
+      &params);
+  return nwrite >= 0 &&
+      SSL_set_quic_transport_params(ssl, buf.data(), nwrite) == 1;
+}
+}
+
+void InitializeTLS(QuicSession* session, SSL* ssl) {
+  SSL_set_app_data(ssl, session);
+  SSL_set_cert_cb(ssl, CertCB, session);
+  SSL_set_verify(ssl, SSL_VERIFY_NONE, crypto::VerifyCallback);
+  SSL_set_quic_early_data_enabled(ssl, 1);
+
+  if (session->env()->options()->trace_tls)
+    session->EnableTrace();
+
+  switch (session->Side()) {
+    case NGTCP2_CRYPTO_SIDE_CLIENT: {
+      SSL_set_connect_state(ssl);
+      SetALPN(ssl, session->GetALPN());
+      SetHostname(ssl, session->GetHostname());
+      if (session->IsOptionSet(QUICCLIENTSESSION_OPTION_REQUEST_OCSP))
+        SSL_set_tlsext_status_type(ssl, TLSEXT_STATUSTYPE_ocsp);
+      break;
+    }
+    case NGTCP2_CRYPTO_SIDE_SERVER: {
+      SSL_set_accept_state(ssl);
+      if (session->IsOptionSet(QUICSERVERSESSION_OPTION_REQUEST_CERT)) {
+        int verify_mode = SSL_VERIFY_PEER;
+        if (session->IsOptionSet(QUICSERVERSESSION_OPTION_REJECT_UNAUTHORIZED))
+          verify_mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+        SSL_set_verify(ssl, verify_mode, crypto::VerifyCallback);
+      }
+      break;
+    }
+    default:
+      UNREACHABLE();
+  }
+
+  SetTransportParams(session->Connection(), ssl);
 }
 
 }  // namespace quic

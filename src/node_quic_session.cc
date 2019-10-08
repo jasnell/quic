@@ -2,6 +2,7 @@
 #include "debug_utils.h"
 #include "env-inl.h"
 #include "ngtcp2/ngtcp2.h"
+#include "ngtcp2/ngtcp2_crypto.h"
 #include "node.h"
 #include "node_buffer.h"
 #include "node_crypto.h"
@@ -175,6 +176,7 @@ QuicSession::QuicSession(
     SecureContext* ctx,
     AsyncWrap::ProviderType provider_type,
     const std::string& alpn,
+    const std::string& hostname,
     uint32_t options,
     uint64_t initial_connection_close)
   : AsyncWrap(socket->env(), wrap, provider_type),
@@ -182,6 +184,7 @@ QuicSession::QuicSession(
     side_(side),
     socket_(socket),
     alpn_(alpn),
+    hostname_(hostname),
     options_(options),
     initial_connection_close_(initial_connection_close),
     idle_(new Timer(socket->env(), [this]() { OnIdleTimeout(); })),
@@ -247,7 +250,9 @@ QuicSession::~QuicSession() {
   CHECK(!Ngtcp2CallbackScope::InNgtcp2CallbackScope(this));
 
   uint64_t sendbuf_length = sendbuf_.Cancel();
-  uint64_t handshake_length = handshake_.Cancel();
+  uint64_t handshake_length = handshake_[0].Cancel();
+  handshake_length += handshake_[1].Cancel();
+  handshake_length += handshake_[2].Cancel();
   uint64_t txbuf_length = txbuf_.Cancel();
 
   Debug(this,
@@ -278,10 +283,46 @@ QuicSession::~QuicSession() {
         txbuf_length);
 }
 
+void QuicSession::SetTLSAlert(int err) {
+  Debug(this, "TLS Alert [%d]: %s", err, SSL_alert_type_string_long(err));
+  SetLastError(InitQuicError(QUIC_ERROR_CRYPTO, err));
+}
+
 std::string QuicSession::diagnostic_name() const {
   return std::string("QuicSession ") +
       (Side() == NGTCP2_CRYPTO_SIDE_SERVER ? "Server" : "Client") +
       " (" + std::to_string(static_cast<int64_t>(get_async_id())) + ")";
+}
+
+// Check required capabilities were not excluded from the OpenSSL build:
+// - OPENSSL_NO_SSL_TRACE excludes SSL_trace()
+// - OPENSSL_NO_STDIO excludes BIO_new_fp()
+// HAVE_SSL_TRACE is available on the internal tcp_wrap binding for the tests.
+#if defined(OPENSSL_NO_SSL_TRACE) || defined(OPENSSL_NO_STDIO)
+# define HAVE_SSL_TRACE 0
+#else
+# define HAVE_SSL_TRACE 1
+#endif
+
+void QuicSession::EnableTrace() {
+#if HAVE_SSL_TRACE
+  if (!bio_trace_) {
+    bio_trace_.reset(BIO_new_fp(stderr,  BIO_NOCLOSE | BIO_FP_TEXT));
+    SSL_set_msg_callback(
+        ssl(),
+        [](int write_p,
+           int version,
+           int content_type,
+           const void* buf,
+           size_t len,
+           SSL* ssl,
+           void* arg) -> void {
+        crypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+        SSL_trace(write_p,  version, content_type, buf, len, ssl, arg);
+    });
+    SSL_set_msg_callback_arg(ssl(), bio_trace_.get());
+  }
+#endif
 }
 
 // Locate the QuicStream with the given id or return nullptr
@@ -292,16 +333,20 @@ QuicStream* QuicSession::FindStream(int64_t id) {
   return it->second.get();
 }
 
-void QuicSession::AckedCryptoOffset(size_t datalen) {
+void QuicSession::AckedCryptoOffset(
+    ngtcp2_crypto_level level,
+    size_t datalen) {
   // It is possible for the QuicSession to have been destroyed but not yet
   // deconstructed. In such cases, we want to ignore the callback as there
   // is nothing to do but wait for further cleanup to happen.
   if (UNLIKELY(IsFlagSet(QUICSESSION_FLAG_DESTROYED)))
     return;
-  Debug(this, "Acknowledging %d crypto bytes", datalen);
+  Debug(this, "Acknowledging %d crypto bytes for %s level",
+        datalen,
+        crypto_level_name(level));
 
   // Consumes (frees) the given number of bytes in the handshake buffer.
-  handshake_.Consume(datalen);
+  handshake_[level].Consume(datalen);
 
   // Update the statistics for the handshake, allowing us to track
   // how long the handshake is taking to be acknowledged. A malicious
@@ -550,16 +595,15 @@ void QuicSession::HandleError() {
 void QuicSession::HandshakeCompleted() {
   session_stats_.handshake_completed_at = uv_hrtime();
 
-  SetLocalCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
   HandleScope scope(env()->isolate());
   Context::Scope context_scope(env()->context());
 
-  const char* host_name =
+  const char* hostname =
       SSL_get_servername(
           ssl_.get(),
           TLSEXT_NAMETYPE_host_name);
 
-  Local<Value> servername = GetServerName(env(), ssl_.get(), host_name);
+  Local<Value> servername = GetServerName(env(), ssl_.get(), hostname);
   Local<Value> alpn = GetALPNProtocol(env(), ssl_.get());
   Local<Value> cipher = GetCipherName(env(), ssl_.get());
   Local<Value> version = GetCipherVersion(env(), ssl_.get());
@@ -570,7 +614,7 @@ void QuicSession::HandshakeCompleted() {
   // of VerifyPeerIdentity() for either.
   Local<Value> verifyErrorReason = v8::Null(env()->isolate());
   Local<Value> verifyErrorCode = v8::Null(env()->isolate());
-  int verifyError = VerifyPeerIdentity(host_name);
+  int verifyError = VerifyPeerIdentity(hostname);
   if (verifyError != 0) {
     const char* reason = X509_verify_cert_error_string(verifyError);
     verifyErrorReason = OneByteString(env()->isolate(), reason);
@@ -605,29 +649,6 @@ bool QuicSession::InitiateUpdateKey() {
   // TODO(@jasnell): If we're not within a ngtcp2 callback when this is
   // called, we likely need to manually trigger a send operation. Need
   // to verify.
-}
-
-// Initialize the TLS context for this QuicSession. This
-// is called exactly once during the construction and
-// initialization of the QuicSession
-void QuicSession::InitTLS() {
-  Debug(this, "Initializing TLS.");
-  BIO* bio = BIO_new(CreateBIOMethod());
-  BIO_set_data(bio, this);
-  SSL_set_bio(ssl(), bio, bio);
-  SSL_set_app_data(ssl(), this);
-  SSL_set_msg_callback(ssl(), MessageCB);
-  SSL_set_msg_callback_arg(ssl(), this);
-  SSL_set_key_callback(ssl(), KeyCB, this);
-  SSL_set_cert_cb(ssl(), CertCB, this);
-  // The verification may be overriden in InitTLS_Post
-  SSL_set_verify(ssl(), SSL_VERIFY_NONE, crypto::VerifyCallback);
-
-  // Servers and Clients do slightly different things at
-  // this point. Both QuicClientSession and QuicServerSession
-  // override the InitTLS_Post function to carry on with
-  // the TLS initialization.
-  InitTLS_Post();
 }
 
 bool QuicSession::IsHandshakeCompleted() {
@@ -667,149 +688,88 @@ void QuicSession::OnIdleTimeout() {
   return SilentClose();
 }
 
-// Once OpenSSL adopts the BoringSSL QUIC apis (and we're able to pick those
-// up) then we will get rx and tx keys in a single callback and this entire
-// method will change. For now, we have to handle the keys one at a time,
-// which is going to make working with the ngtcp2 api a bit more difficult
-// since it's moving to a model where it assumes both rx and tx keys are
-// available at the same time.
-bool QuicSession::OnKey(int name, const uint8_t* secret, size_t secretlen) {
-  const ngtcp2_crypto_ctx* ctx = GetCryptoContext(Connection(), ssl());
-  if (name == SSL_KEY_CLIENT_EARLY_TRAFFIC)
-    return InstallEarlyKeys(Connection(), ctx, secret, secretlen);
+bool QuicSession::OnSecrets(
+    ngtcp2_crypto_level level,
+    const uint8_t* rx_secret,
+    const uint8_t* tx_secret,
+    size_t secretlen) {
 
-  SessionKey* key = nullptr;
-  SessionIV* iv = nullptr;
-  SessionKey* hp = nullptr;
-
-  // Most of this switch statement is just deciding where the key
-  // material is going to be stored, then check to see if we've enough
-  // information to continue with the install operation
-
-  switch (Side()) {
-    case NGTCP2_CRYPTO_SIDE_SERVER: {
-      switch (name) {
-        case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_HANDSHAKE_RX);
-          if (!key_storage_handshake_)
-            key_storage_handshake_.reset(new KeyStorage());
-          key = &key_storage_handshake_->rx_key;
-          iv = &key_storage_handshake_->rx_iv;
-          hp = &key_storage_handshake_->rx_hp;
-          break;
-        case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_SESSION_RX);
-          rx_secret_.assign(secret, secret + secretlen);
-          if (!key_storage_session_)
-            key_storage_session_.reset(new KeyStorage());
-          key = &key_storage_session_->rx_key;
-          iv = &key_storage_session_->rx_iv;
-          hp = &key_storage_session_->rx_hp;
-          SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
-          break;
-        case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_HANDSHAKE_TX);
-          if (!key_storage_handshake_)
-            key_storage_handshake_.reset(new KeyStorage());
-          key = &key_storage_handshake_->tx_key;
-          iv = &key_storage_handshake_->tx_iv;
-          hp = &key_storage_handshake_->tx_hp;
-          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
-          break;
-        case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_SESSION_TX);
-          tx_secret_.assign(secret, secret + secretlen);
-          if (!key_storage_session_)
-            key_storage_session_.reset(new KeyStorage());
-          key = &key_storage_session_->tx_key;
-          iv = &key_storage_session_->tx_iv;
-          hp = &key_storage_session_->tx_hp;
-          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
-        break;
-      }
-      break;
-    }
-    case NGTCP2_CRYPTO_SIDE_CLIENT: {
-      switch (name) {
-        case SSL_KEY_CLIENT_HANDSHAKE_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_HANDSHAKE_TX);
-          if (!key_storage_handshake_)
-            key_storage_handshake_.reset(new KeyStorage());
-          key = &key_storage_handshake_->tx_key;
-          iv = &key_storage_handshake_->tx_iv;
-          hp = &key_storage_handshake_->tx_hp;
-          break;
-        case SSL_KEY_CLIENT_APPLICATION_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_SESSION_TX);
-          tx_secret_.assign(secret, secret + secretlen);
-          if (!key_storage_session_)
-            key_storage_session_.reset(new KeyStorage());
-          key = &key_storage_session_->tx_key;
-          iv = &key_storage_session_->tx_iv;
-          hp = &key_storage_session_->tx_hp;
-          SetClientCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
-          break;
-        case SSL_KEY_SERVER_HANDSHAKE_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_HANDSHAKE_RX);
-          if (!key_storage_handshake_)
-            key_storage_handshake_.reset(new KeyStorage());
-          key = &key_storage_handshake_->rx_key;
-          iv = &key_storage_handshake_->rx_iv;
-          hp = &key_storage_handshake_->rx_hp;
-          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_HANDSHAKE);
-          break;
-        case SSL_KEY_SERVER_APPLICATION_TRAFFIC:
-          SetFlag(QUICSESSION_FLAG_SESSION_RX);
-          rx_secret_.assign(secret, secret + secretlen);
-          if (!key_storage_session_)
-            key_storage_session_.reset(new KeyStorage());
-          key = &key_storage_session_->rx_key;
-          iv = &key_storage_session_->rx_iv;
-          hp = &key_storage_session_->rx_hp;
-          SetServerCryptoLevel(NGTCP2_CRYPTO_LEVEL_APP);
-        break;
-      }
-      break;
-    }
-    default:
-      UNREACHABLE();
+  if (level == NGTCP2_CRYPTO_LEVEL_APP) {
+    rx_secret_.assign(rx_secret, rx_secret + secretlen);
+    tx_secret_.assign(tx_secret, tx_secret + secretlen);
   }
 
-  DCHECK_NOT_NULL(key);
-  DCHECK_NOT_NULL(iv);
-  DCHECK_NOT_NULL(hp);
+  Debug(this, "Received secrets for %s crypto level", crypto_level_name(level));
 
-  if (!DerivePacketProtectionKey(
-          key->data(),
-          iv->data(),
-          hp->data(),
-          ctx,
-          secret,
-          secretlen)) {
+  SessionKey rx_key;
+  SessionIV rx_iv;
+  SessionKey rx_hp;
+  SessionKey tx_key;
+  SessionIV tx_iv;
+  SessionKey tx_hp;
+
+  if (NGTCP2_ERR(ngtcp2_crypto_derive_and_install_key(
+          Connection(),
+          ssl(),
+          rx_key.data(),
+          rx_iv.data(),
+          rx_hp.data(),
+          tx_key.data(),
+          tx_iv.data(),
+          tx_hp.data(),
+          level,
+          rx_secret,
+          tx_secret,
+          secretlen,
+          Side()))) {
+    Debug(this, "Failed to derive and install %s crypto level keys",
+          crypto_level_name(level));
     return false;
   }
 
-  if (IsFlagSet(QUICSESSION_FLAG_HANDSHAKE_KEYS)) {
-    SetFlag(QUICSESSION_FLAG_HANDSHAKE_KEYS, false);
-    if (!InstallHandshakeKeys(
-            Connection(),
-            ctx,
-            std::move(key_storage_handshake_)))
-      return false;
+  switch (level) {
+  case NGTCP2_CRYPTO_LEVEL_EARLY:
+    LogSecret(
+        ssl(),
+        QUIC_CLIENT_EARLY_TRAFFIC_SECRET,
+        rx_secret,
+        secretlen);
+    break;
+  case NGTCP2_CRYPTO_LEVEL_HANDSHAKE:
+    LogSecret(
+        ssl(),
+        QUIC_CLIENT_HANDSHAKE_TRAFFIC_SECRET,
+        rx_secret,
+        secretlen);
+    LogSecret(
+        ssl(),
+        QUIC_SERVER_HANDSHAKE_TRAFFIC_SECRET,
+        tx_secret,
+        secretlen);
+    break;
+  case NGTCP2_CRYPTO_LEVEL_APP:
+    LogSecret(
+        ssl(),
+        QUIC_CLIENT_TRAFFIC_SECRET_0,
+        rx_secret,
+        secretlen);
+    LogSecret(
+        ssl(),
+        QUIC_SERVER_TRAFFIC_SECRET_0,
+        tx_secret,
+        secretlen);
+    break;
+  default:
+    assert(0);
   }
 
-  if (IsFlagSet(QUICSESSION_FLAG_SESSION_KEYS)) {
-    SetFlag(QUICSESSION_FLAG_SESSION_KEYS, false);
-    if (!InstallSessionKeys(
-            Connection(),
-            ctx,
-            std::move(key_storage_session_)))
-      return false;
-   }
+  // TODO(@jasnell): Once http3 code is integrated... finish this
+  // if (level == NGTCP2_CRYPTO_LEVEL_APP && setup_httpconn() != 0) {
+  //   return -1;
+  // }
 
-   return true;
+  return true;
 }
-
 
 void QuicSession::MaybeTimeout() {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
@@ -1048,20 +1008,26 @@ int QuicSession::ReceiveCryptoData(
     Debug(this, "Destroyed session cannot receive crypto data");
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
-
   Debug(this, "Receiving %d bytes of crypto data.", datalen);
-
-  if (!WritePeerHandshake(crypto_level, data, datalen)) {
-    Debug(this, "Unable to cache peer handshake data.");
-    return NGTCP2_ERR_CALLBACK_FAILURE;
+  int ret = ngtcp2_crypto_read_write_crypto_data(
+      Connection(),
+      ssl(),
+      crypto_level,
+      data,
+      datalen);
+  switch (ret) {
+    case 0:
+      return 0;
+    // Explicitly ignore these cases because we handle them.
+    case NGTCP2_ERR_TLS_WANT_X509_LOOKUP:
+      Debug(this, "TLS handshake wants X509 Lookup");
+      return 0;
+    case NGTCP2_ERR_TLS_WANT_CLIENT_HELLO_CB:
+      Debug(this, "TLS handshake wants client hello callback");
+      return 0;
+    default:
+      return ret;
   }
-
-  // If the handshake is not yet completed, incrementally advance
-  // the handshake process.
-  if (!IsHandshakeCompleted() && !TLSHandshake())
-    return NGTCP2_ERR_CRYPTO;
-
-  return 0;
 }
 
 // The ReceiveClientInitial function is called by ngtcp2 when
@@ -1072,12 +1038,29 @@ bool QuicSession::ReceiveClientInitial(const ngtcp2_cid* dcid) {
   if (UNLIKELY(IsFlagSet(QUICSESSION_FLAG_DESTROYED)))
     return false;
   Debug(this, "Receiving client initial parameters.");
-  return DeriveAndInstallInitialKey(
-    Connection(),
-    GetInitialCryptoContext(Connection()),
-    dcid,
-    NGTCP2_CRYPTO_SIDE_SERVER) &&
-    initial_connection_close_ == NGTCP2_NO_ERROR;
+  InitialSecret initial_secret;
+  InitialSecret rx_secret;
+  InitialSecret tx_secret;
+  InitialKey rx_key;
+  InitialIV rx_iv;
+  InitialKey rx_hp;
+  InitialKey tx_key;
+  InitialIV tx_iv;
+  InitialKey tx_hp;
+  return NGTCP2_OK(ngtcp2_crypto_derive_and_install_initial_key(
+      Connection(),
+      rx_secret.data(),
+      tx_secret.data(),
+      initial_secret.data(),
+      rx_key.data(),
+      rx_iv.data(),
+      rx_hp.data(),
+      tx_key.data(),
+      tx_iv.data(),
+      tx_hp.data(),
+      dcid,
+      Side())) &&
+      initial_connection_close_ == NGTCP2_NO_ERROR;
 }
 
 bool QuicSession::ReceivePacket(
@@ -1630,64 +1613,6 @@ void QuicSession::StreamReset(
   MakeCallback(env()->quic_on_stream_reset_function(), arraysize(argv), argv);
 }
 
-// Incrementally performs the TLS handshake. This function is called
-// multiple times while handshake data is being passed back and forth
-// between the peers.
-bool QuicSession::TLSHandshake() {
-  if (IsFlagSet(QUICSESSION_FLAG_DESTROYED) ||
-      IsHandshakeCompleted()) {
-    return true;
-  }
-
-  ClearTLSError();
-
-  uint64_t now = uv_hrtime();
-  if (!IsFlagSet(QUICSESSION_FLAG_INITIAL)) {
-    Debug(this, "TLS handshake starting");
-    session_stats_.handshake_start_at = now;
-    if (TLSHandshake_Initial() != 0) {
-      Debug(this, "TLS handshake failed at initialization");
-      return false;
-    }
-  } else {
-    Debug(this, "TLS handshake continuing");
-    uint64_t ts =
-        session_stats_.handshake_continue_at > 0 ?
-            session_stats_.handshake_continue_at :
-            session_stats_.handshake_start_at;
-    crypto_handshake_rate_->Record(now - ts);
-  }
-  session_stats_.handshake_continue_at = now;
-
-  int ret = DoTLSHandshake(ssl());
-  if (ret < 0) {
-    Debug(this, "TLS handshake failed with error code %d", ret);
-    return false;
-  }
-
-  if (ret == 0) {
-    Debug(this, "TLS handshake is not yet completed");
-    return true;
-  }
-
-  if (!TLSHandshake_Complete()) {
-    Debug(this, "TLS handshake failed after completion");
-    return false;
-  }
-
-  Debug(this, "TLS handshake completed.");
-  SetHandshakeCompleted();
-  return true;
-}
-
-// It's possible for TLS handshake to contain extra data that is not
-// consumed by ngtcp2. That's ok and the data is just extraneous. We just
-// read it and throw it away, unless there's an error.
-bool QuicSession::TLSRead() {
-  ClearTLSError();
-  return ClearTLS(ssl());
-}
-
 void QuicSession::UpdateIdleTimer() {
   CHECK_NOT_NULL(idle_);
   uint64_t timeout = ngtcp2_conn_get_idle_expiry(Connection()) / 1000000UL;
@@ -1695,18 +1620,24 @@ void QuicSession::UpdateIdleTimer() {
   idle_->Update(timeout);
 }
 
-void QuicSession::WriteHandshake(const uint8_t* data, size_t datalen) {
+void QuicSession::WriteHandshake(
+    ngtcp2_crypto_level level,
+    const uint8_t* data,
+    size_t datalen) {
   if (IsFlagSet(QUICSESSION_FLAG_DESTROYED))
     return;
-  Debug(this, "Writing %d bytes of handshake data.", datalen);
+  Debug(this, "Writing %d bytes of %s handshake data.",
+        datalen,
+        crypto_level_name(level));
   MallocedBuffer<uint8_t> buffer(datalen);
   memcpy(buffer.data, data, datalen);
+  // TODO(@jasnell): Need to verify the data ownership here
   CHECK_EQ(
       ngtcp2_conn_submit_crypto_data(
           Connection(),
-          tx_crypto_level_,
+          level,
           buffer.data, datalen), 0);
-  handshake_.Push(std::move(buffer));
+  handshake_[level].Push(std::move(buffer));
 }
 
 // Write any packets current pending for the ngtcp2 connection based on
@@ -1779,7 +1710,6 @@ bool QuicSession::WritePeerHandshake(
     ngtcp2_crypto_level crypto_level,
     const uint8_t* data,
     size_t datalen) {
-  CHECK_EQ(rx_crypto_level_, crypto_level);
   if (peer_handshake_.size() + datalen > max_crypto_buffer_)
     return false;
   Debug(this, "Writing %d bytes of peer handshake data.", datalen);
@@ -1802,11 +1732,34 @@ bool QuicSession::UpdateKey() {
 
   IncrementStat(1, &session_stats_, &session_stats::keyupdate_count);
 
-  return UpdateAndInstallKey(
-      Connection(),
-      &rx_secret_,
-      &tx_secret_,
-      rx_secret_.size());
+  SessionSecret rx_secret;
+  SessionSecret tx_secret;
+  SessionKey rx_key;
+  SessionIV rx_iv;
+  SessionKey tx_key;
+  SessionIV tx_iv;
+
+  if (NGTCP2_ERR(ngtcp2_crypto_update_and_install_key(
+         Connection(),
+         rx_secret.data(),
+         tx_secret.data(),
+         rx_key.data(),
+         rx_iv.data(),
+         tx_key.data(),
+         tx_iv.data(),
+         rx_secret_.data(),
+         tx_secret_.data(),
+         rx_secret_.size()))) {
+    return false;
+  }
+
+  rx_secret_.assign(std::begin(rx_secret),
+                    std::begin(rx_secret) + rx_secret_.size());
+
+  tx_secret_.assign(std::begin(tx_secret),
+                    std::begin(tx_secret) + tx_secret_.size());
+
+  return true;
 }
 
 void QuicSession::MemoryInfo(MemoryTracker* tracker) const {
@@ -1816,7 +1769,9 @@ void QuicSession::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("rx_secret", rx_secret_);
   tracker->TrackField("tx_secret", tx_secret_);
   tracker->TrackField("sendbuf", sendbuf_);
-  tracker->TrackField("handshake", handshake_);
+  tracker->TrackField("initial_crypto", handshake_[0]);
+  tracker->TrackField("handshake_crypto", handshake_[1]);
+  tracker->TrackField("app_crypto", handshake_[2]);
   tracker->TrackField("txbuf", txbuf_);
   tracker->TrackField("peer_handshake", peer_handshake_);
   tracker->TrackField("streams", streams_);
@@ -1870,6 +1825,7 @@ QuicServerSession::QuicServerSession(
         socket->GetServerSecureContext(),
         AsyncWrap::PROVIDER_QUICSERVERSESSION,
         alpn,
+        std::string(""),  // empty hostname. not used on server side
         options,
         initial_connection_close),
     rcid_(*rcid) {
@@ -1944,12 +1900,9 @@ void QuicServerSession::Init(
   remote_address_.Copy(addr);
   max_pktlen_ = SocketAddress::GetMaxPktLen(addr);
 
-  InitTLS();
-
-  QuicSessionConfig cfg = *config;
-  cfg.GenerateStatelessResetToken();
-  cfg.GeneratePreferredAddressToken(pscid());
-  max_crypto_buffer_ = cfg.GetMaxCryptoBuffer();
+  config->GenerateStatelessResetToken();
+  config->GeneratePreferredAddressToken(pscid());
+  max_crypto_buffer_ = config->GetMaxCryptoBuffer();
 
   EntropySource(scid_.data, NGTCP2_SV_SCIDLEN);
   scid_.datalen = NGTCP2_SV_SCIDLEN;
@@ -1965,7 +1918,7 @@ void QuicServerSession::Init(
           *path,
           version,
           &callbacks,
-          *cfg,
+          **config,
           &alloc_info_,
           static_cast<QuicSession*>(this)), 0);
 
@@ -1973,18 +1926,8 @@ void QuicServerSession::Init(
     ngtcp2_conn_set_retry_ocid(conn, ocid);
   connection_.reset(conn);
 
+  InitializeTLS(this, ssl());
   UpdateIdleTimer();
-}
-
-void QuicServerSession::InitTLS_Post() {
-  SSL_set_accept_state(ssl());
-
-  if (IsOptionSet(QUICSERVERSESSION_OPTION_REQUEST_CERT)) {
-    int verify_mode = SSL_VERIFY_PEER;
-    if (IsOptionSet(QUICSERVERSESSION_OPTION_REJECT_UNAUTHORIZED))
-      verify_mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-    SSL_set_verify(ssl(), verify_mode, crypto::VerifyCallback);
-  }
 }
 
 void QuicSessionOnClientHelloDone(const FunctionCallbackInfo<Value>& args) {
@@ -1996,7 +1939,10 @@ void QuicSessionOnClientHelloDone(const FunctionCallbackInfo<Value>& args) {
 void QuicServerSession::OnClientHelloDone() {
   // Continue the TLS handshake when this function exits
   // otherwise it will stall and fail.
-  TLSHandshakeScope handshake(this, QUICSESSION_FLAG_CLIENT_HELLO_CB_RUNNING);
+  TLSHandshakeScope handshake(
+      GetReadCryptoLevel(),
+      this,
+      QUICSESSION_FLAG_CLIENT_HELLO_CB_RUNNING);
   // Disable the callback at this point so we don't loop continuously
   state_[IDX_QUIC_SESSION_STATE_CLIENT_HELLO_ENABLED] = 0;
 }
@@ -2109,7 +2055,10 @@ void QuicServerSession::OnCertDone(
         ocsp_response->IsArrayBufferView() ? "Yes" : "No");
   // Continue the TLS handshake when this function exits
   // otherwise it will stall and fail.
-  TLSHandshakeScope handshake_scope(this, QUICSESSION_FLAG_CERT_CB_RUNNING);
+  TLSHandshakeScope handshake_scope(
+    GetReadCryptoLevel(),
+    this,
+    QUICSESSION_FLAG_CERT_CB_RUNNING);
   // Disable the callback at this point so we don't loop continuously
   state_[IDX_QUIC_SESSION_STATE_CERT_ENABLED] = 0;
 
@@ -2307,11 +2256,6 @@ bool QuicServerSession::StartClosingPeriod() {
   return true;
 }
 
-int QuicServerSession::TLSHandshake_Initial() {
-  SetFlag(QUICSESSION_FLAG_INITIAL);
-  return DoTLSReadEarlyData(ssl());
-}
-
 // For the server-side, we only care that the client provided
 // certificate is signed by some entity the server trusts.
 // Any additional checks can be performed in usercode on the
@@ -2337,13 +2281,13 @@ QuicClientSession::QuicClientSession(
     const struct sockaddr* addr,
     uint32_t version,
     SecureContext* context,
-    const char* hostname,
     uint32_t port,
     Local<Value> early_transport_params,
     Local<Value> session_ticket,
     Local<Value> dcid,
     SelectPreferredAddressPolicy select_preferred_address_policy,
     const std::string& alpn,
+    const std::string& hostname,
     uint32_t options) :
     QuicSession(
         NGTCP2_CRYPTO_SIDE_CLIENT,
@@ -2352,11 +2296,11 @@ QuicClientSession::QuicClientSession(
         context,
         AsyncWrap::PROVIDER_QUICCLIENTSESSION,
         alpn,
+        hostname,
         options),
     version_(version),
     port_(port),
-    select_preferred_address_policy_(select_preferred_address_policy),
-    hostname_(hostname) {
+    select_preferred_address_policy_(select_preferred_address_policy) {
   CHECK(Init(addr, version, early_transport_params, session_ticket, dcid));
 }
 
@@ -2365,13 +2309,13 @@ BaseObjectPtr<QuicSession> QuicClientSession::New(
     const struct sockaddr* addr,
     uint32_t version,
     SecureContext* context,
-    const char* hostname,
     uint32_t port,
     Local<Value> early_transport_params,
     Local<Value> session_ticket,
     Local<Value> dcid,
     SelectPreferredAddressPolicy select_preferred_address_policy,
     const std::string& alpn,
+    const std::string& hostname,
     uint32_t options) {
   Local<Object> obj;
   if (!socket->env()
@@ -2387,13 +2331,13 @@ BaseObjectPtr<QuicSession> QuicClientSession::New(
           addr,
           version,
           context,
-          hostname,
           port,
           early_transport_params,
           session_ticket,
           dcid,
           select_preferred_address_policy,
           alpn,
+          hostname,
           options);
 
   session->AddToSocket(socket);
@@ -2466,8 +2410,6 @@ bool QuicClientSession::Init(
   remote_address_.Copy(addr);
   max_pktlen_ = SocketAddress::GetMaxPktLen(addr);
 
-  InitTLS();
-
   QuicSessionConfig config(env());
   max_crypto_buffer_ = config.GetMaxCryptoBuffer();
   ExtendMaxStreamsBidi(config.max_streams_bidi());
@@ -2505,6 +2447,8 @@ bool QuicClientSession::Init(
           static_cast<QuicSession*>(this)), 0);
 
   connection_.reset(conn);
+
+  InitializeTLS(this, ssl());
 
   CHECK(SetupInitialCryptoContext());
 
@@ -2647,34 +2591,6 @@ void QuicClientSession::StoreRemoteTransportParams(
   has_transport_params_ = true;
 }
 
-void QuicClientSession::InitTLS_Post() {
-  SSL_set_connect_state(ssl());
-
-  Debug(this, "Using %s as the ALPN protocol.", GetALPN().c_str() + 1);
-  const uint8_t* alpn = reinterpret_cast<const uint8_t*>(GetALPN().c_str());
-  size_t alpnlen = GetALPN().length();
-  SSL_set_alpn_protos(ssl(), alpn, alpnlen);
-
-  // If the hostname is an IP address and we have no additional
-  // information, use localhost.
-
-  if (SocketAddress::numeric_host(hostname_.c_str())) {
-    // TODO(@jasnell): Should we do this at all? If the host is numeric,
-    // the we likely shouldn't set the SNI at all.
-    Debug(this, "Using localhost as fallback hostname.");
-    SSL_set_tlsext_host_name(ssl(), "localhost");
-  } else {
-    SSL_set_tlsext_host_name(ssl(), hostname_.c_str());
-  }
-
-  // Are we going to request OCSP status?
-  if (IsOptionSet(QUICCLIENTSESSION_OPTION_REQUEST_OCSP)) {
-    Debug(this, "Request OCSP status from the server.");
-    SSL_set_tlsext_status_type(ssl(), TLSEXT_STATUSTYPE_ocsp);
-  }
-}
-
-
 // During TLS handshake, if the client has requested OCSP status, this
 // function will be invoked when the response has been received from
 // the server.
@@ -2774,48 +2690,29 @@ bool QuicClientSession::SetSession(Local<Value> buffer) {
 // client side by creating the initial keying material.
 bool QuicClientSession::SetupInitialCryptoContext() {
   Debug(this, "Setting up initial crypto context");
-  return DeriveAndInstallInitialKey(
+  InitialSecret initial_secret;
+  InitialSecret rx_secret;
+  InitialSecret tx_secret;
+  SessionKey rx_key;
+  SessionIV rx_iv;
+  SessionKey rx_hp;
+  SessionKey tx_key;
+  SessionIV tx_iv;
+  SessionKey tx_hp;
+
+  return NGTCP2_OK(ngtcp2_crypto_derive_and_install_initial_key(
       Connection(),
-      GetInitialCryptoContext(Connection()),
+      rx_secret.data(),
+      tx_secret.data(),
+      initial_secret.data(),
+      rx_key.data(),
+      rx_iv.data(),
+      rx_hp.data(),
+      tx_key.data(),
+      tx_iv.data(),
+      tx_hp.data(),
       ngtcp2_conn_get_dcid(Connection()),
-      NGTCP2_CRYPTO_SIDE_CLIENT);
-}
-
-bool QuicClientSession::TLSHandshake_Complete() {
-  if (IsOptionSet(QUICCLIENTSESSION_OPTION_RESUME) &&
-      SSL_get_early_data_status(ssl()) != SSL_EARLY_DATA_ACCEPTED) {
-    Debug(this, "Early data was rejected.");
-    int err = ngtcp2_conn_early_data_rejected(Connection());
-    if (err != 0) {
-      Debug(this,
-            "Failure notifying ngtcp2 about early data rejection. Error %d",
-            err);
-    }
-    return false;
-  }
-  return QuicSession::TLSHandshake_Complete();
-}
-
-int QuicClientSession::TLSHandshake_Initial() {
-  if (IsOptionSet(QUICCLIENTSESSION_OPTION_RESUME) &&
-      SSL_SESSION_get_max_early_data(SSL_get_session(ssl()))) {
-    size_t nwrite;
-    int err = SSL_write_early_data(ssl(), "", 0, &nwrite);
-    if (err == 0) {
-      err = SSL_get_error(ssl(), err);
-      switch (err) {
-        case SSL_ERROR_SSL:
-          Debug(this, "TLS Handshake Error: %s",
-                ERR_error_string(ERR_get_error(), nullptr));
-          break;
-        default:
-          Debug(this, "TLS Handshake Error: %d", err);
-      }
-      return -1;
-    }
-  }
-  SetFlag(QUICSESSION_FLAG_INITIAL);
-  return 0;
+      Side()));
 }
 
 int QuicClientSession::VerifyPeerIdentity(const char* hostname) {
@@ -2853,11 +2750,9 @@ int QuicSession::OnClientInitial(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  if (!session->TLSHandshake()) {
-    Debug(session, "Initializing initial client handshake failed");
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  }
-  return 0;
+  return NGTCP2_OK(session->ReceiveCryptoData(
+      NGTCP2_CRYPTO_LEVEL_INITIAL,
+      0, nullptr, 0)) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 
 // Called by ngtcp2 for a new server connection when the initial
@@ -2956,69 +2851,6 @@ int QuicSession::OnHandshakeCompleted(
   return 0;
 }
 
-// Called by ngtcp2 when non-TLS handshake data needs to be
-// encrypted prior to sending.
-int QuicSession::OnEncrypt(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    const ngtcp2_crypto_aead* aead,
-    const uint8_t* plaintext,
-    size_t plaintextlen,
-    const uint8_t* key,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-
-  if (!Encrypt(
-          dest,
-          aead,
-          plaintext,
-          plaintextlen,
-          key,
-          nonce,
-          noncelen,
-          ad,
-          adlen)) {
-    QuicSession* session = static_cast<QuicSession*>(user_data);
-    Debug(session, "Encrypting data failed");
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  }
-  return 0;
-}
-
-// Called by ngtcp2 when encrypted non-TLS handshake data
-// has been received.
-int QuicSession::OnDecrypt(
-    ngtcp2_conn* conn,
-    uint8_t* dest,
-    const ngtcp2_crypto_aead* aead,
-    const uint8_t* ciphertext,
-    size_t ciphertextlen,
-    const uint8_t* key,
-    const uint8_t* nonce,
-    size_t noncelen,
-    const uint8_t* ad,
-    size_t adlen,
-    void* user_data) {
-  if (!Decrypt(
-          dest,
-          aead,
-          ciphertext,
-          ciphertextlen,
-          key,
-          nonce,
-          noncelen,
-          ad,
-          adlen)) {
-    QuicSession* session = static_cast<QuicSession*>(user_data);
-    Debug(session, "Decrypting data failed");
-    return NGTCP2_ERR_TLS_DECRYPT;
-  }
-  return 0;
-}
-
 int QuicSession::OnHPMask(
     ngtcp2_conn* conn,
     uint8_t* dest,
@@ -3026,12 +2858,8 @@ int QuicSession::OnHPMask(
     const uint8_t* key,
     const uint8_t* sample,
     void* user_data) {
-  if (!HP_Mask(dest, hp, key, sample)) {
-    QuicSession* session = static_cast<QuicSession*>(user_data);
-    Debug(session, "Generating HP mask failed");
-    return NGTCP2_ERR_CALLBACK_FAILURE;
-  }
-  return 0;
+  return ngtcp2_crypto_hp_mask(dest, hp, key, sample) == 0 ?
+      0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 
 // Called by ngtcp2 when a chunk of stream data has been received.
@@ -3070,7 +2898,7 @@ int QuicSession::OnAckedCryptoOffset(
     void* user_data) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
   QuicSession::Ngtcp2CallbackScope callback_scope(session);
-  session->AckedCryptoOffset(datalen);
+  session->AckedCryptoOffset(crypto_level, datalen);
   return 0;
 }
 
@@ -3232,8 +3060,8 @@ const ngtcp2_conn_callbacks QuicServerSession::callbacks = {
   OnReceiveCryptoData,
   OnHandshakeCompleted,
   nullptr,  // recv_version_negotiation
-  OnEncrypt,
-  OnDecrypt,
+  ngtcp2_crypto_encrypt_cb,
+  ngtcp2_crypto_decrypt_cb,
   OnHPMask,
   OnReceiveStreamData,
   OnAckedCryptoOffset,
@@ -3262,8 +3090,8 @@ const ngtcp2_conn_callbacks QuicClientSession::callbacks = {
   OnReceiveCryptoData,
   OnHandshakeCompleted,
   OnVersionNegotiation,
-  OnEncrypt,
-  OnDecrypt,
+  ngtcp2_crypto_encrypt_cb,
+  ngtcp2_crypto_decrypt_cb,
   OnHPMask,
   OnReceiveStreamData,
   OnAckedCryptoOffset,
@@ -3521,6 +3349,7 @@ void NewQuicClientSession(const FunctionCallbackInfo<Value>& args) {
 
   // SNI Servername
   node::Utf8Value servername(args.GetIsolate(), args[6]);
+  std::string hostname(*servername);
 
   sockaddr_storage addr;
   int err = SocketAddress::ToSockAddr(family, *address, port, &addr);
@@ -3548,7 +3377,6 @@ void NewQuicClientSession(const FunctionCallbackInfo<Value>& args) {
           socket,
           const_cast<const sockaddr*>(reinterpret_cast<sockaddr*>(&addr)),
           NGTCP2_PROTO_VER, sc,
-          *servername,
           port,
           args[7],
           args[8],
@@ -3556,6 +3384,7 @@ void NewQuicClientSession(const FunctionCallbackInfo<Value>& args) {
           static_cast<SelectPreferredAddressPolicy>
               (select_preferred_address_policy),
           alpn,
+          hostname,
           options);
 
   session->SendPendingData();
