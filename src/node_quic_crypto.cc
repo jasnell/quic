@@ -113,8 +113,7 @@ void GenerateRandData(uint8_t* buf, size_t len) {
 
 bool GenerateResetToken(
     uint8_t* token,
-    uint8_t* secret,
-    size_t secretlen,
+   const ResetTokenSecret& secret,
     const ngtcp2_cid* cid) {
   ngtcp2_crypto_ctx ctx;
   ngtcp2_crypto_ctx_initial(&ctx);
@@ -122,8 +121,8 @@ bool GenerateResetToken(
       token,
       NGTCP2_STATELESS_RESET_TOKENLEN,
       &ctx.md,
-      secret,
-      secretlen,
+      secret.data(),
+      secret.size(),
       cid->data,
       cid->datalen));
 }
