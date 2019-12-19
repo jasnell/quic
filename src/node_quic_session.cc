@@ -166,31 +166,30 @@ void QuicSessionConfig::SetOriginalConnectionID(const ngtcp2_cid* ocid) {
   }
 }
 
-// TODO(@jasnell): Once both https://github.com/nodejs/quic/pull/235 and
-// https://github.com/nodejs/quic/pull/236 both land, this needs to be
-// refactored to use the pluggable stateless reset token strategy
-void QuicSessionConfig::GenerateStatelessResetToken() {
+void QuicSessionConfig::GenerateStatelessResetToken(
+    StatelessResetTokenStrategy strategy,
+    QuicSession* session,
+    ngtcp2_cid* cid) {
   transport_params.stateless_reset_token_present = 1;
-  EntropySource(
+  strategy(
+      session,
+      cid,
       transport_params.stateless_reset_token,
-      arraysize(transport_params.stateless_reset_token));
+      NGTCP2_STATELESS_RESET_TOKENLEN);
 }
 
-// TODO(@jasnell): Once both https://github.com/nodejs/quic/pull/235 and
-// https://github.com/nodejs/quic/pull/236 both land, this needs to be
-// refactored to use the pluggable stateless reset token strategy and
-// connection ID strategy.
-void QuicSessionConfig::GeneratePreferredAddressToken(ngtcp2_cid* pscid) {
-  if (!transport_params.preferred_address_present)
-    return;
-  size_t len =
-      arraysize(
-          transport_params.preferred_address.stateless_reset_token);
-  EntropySource(
-      transport_params.preferred_address.stateless_reset_token, len);
+void QuicSessionConfig::GeneratePreferredAddressToken(
+    ConnectionIDStrategy connection_id_strategy,
+    StatelessResetTokenStrategy stateless_reset_strategy,
+    QuicSession* session,
+    ngtcp2_cid* pscid) {
 
-  pscid->datalen = NGTCP2_SV_SCIDLEN;
-  EntropySource(pscid->data, pscid->datalen);
+  connection_id_strategy(session, pscid, NGTCP2_SV_SCIDLEN);
+  stateless_reset_strategy(
+      session,
+      pscid,
+      transport_params.preferred_address.stateless_reset_token,
+      NGTCP2_STATELESS_RESET_TOKENLEN);
   transport_params.preferred_address.cid = *pscid;
 }
 
@@ -2725,11 +2724,19 @@ void QuicSession::InitServer(
   max_pktlen_ = GetMaxPktLen(remote_addr);
 
   config->SetOriginalConnectionID(ocid);
-  config->GenerateStatelessResetToken();
-  config->GeneratePreferredAddressToken(pscid());
 
-  EntropySource(scid_.data, NGTCP2_SV_SCIDLEN);
-  scid_.datalen = NGTCP2_SV_SCIDLEN;
+  config->GenerateStatelessResetToken(
+      stateless_reset_strategy_,
+      this,
+      const_cast<ngtcp2_cid*>(dcid));
+
+  config->GeneratePreferredAddressToken(
+      connection_id_strategy_,
+      stateless_reset_strategy_,
+      this,
+      pscid());
+
+  connection_id_strategy_(this, &scid_, NGTCP2_SV_SCIDLEN);
 
   QuicPath path(local_addr, remote_address_);
 
@@ -2859,8 +2866,7 @@ bool QuicSession::InitClient(
   ExtendMaxStreamsBidi(DEFAULT_MAX_STREAMS_BIDI);
   ExtendMaxStreamsUni(DEFAULT_MAX_STREAMS_UNI);
 
-  scid_.datalen = NGTCP2_MAX_CIDLEN;
-  EntropySource(scid_.data, scid_.datalen);
+  connection_id_strategy_(this, &scid_, NGTCP2_MAX_CIDLEN);
 
   ngtcp2_cid dcid;
   if (dcid_value->IsArrayBufferView()) {
@@ -2871,8 +2877,7 @@ bool QuicSession::InitClient(
     memcpy(dcid.data, sbuf.data(), sbuf.length());
     dcid.datalen = sbuf.length();
   } else {
-    dcid.datalen = NGTCP2_MAX_CIDLEN;
-    EntropySource(dcid.data, dcid.datalen);
+    connection_id_strategy_(this, &dcid, NGTCP2_MAX_CIDLEN);
   }
 
   QuicPath path(local_address_, remote_address_);
