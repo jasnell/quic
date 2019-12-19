@@ -956,10 +956,8 @@ bool QuicCryptoContext::OnSecrets(
     size_t secretlen) {
 
   auto maybe_init_app = OnScopeLeave([&]() {
-    if (level == NGTCP2_CRYPTO_LEVEL_APP) {
-      // TODO(@jasnell): Fail if init returns false
+    if (level == NGTCP2_CRYPTO_LEVEL_APP)
       session_->InitApplication();
-    }
   });
 
   Debug(session_,
@@ -1439,11 +1437,15 @@ void QuicSession::RemoveListener(QuicSessionListener* listener) {
   listener->previous_listener_ = nullptr;
 }
 
+// Indicates that the stream is blocked from transmitting any
+// data. The specific handling of this is application specific.
+// By default, we keep track of statistics but leave it up to
+// the application to perform specific handling.
 void QuicSession::StreamDataBlocked(int64_t stream_id) {
-  // Increments the block count
   IncrementStat(1, &session_stats_, &session_stats::block_count);
 }
 
+// The diagnostic_name is used in Debug output.
 std::string QuicSession::diagnostic_name() const {
   return std::string("QuicSession ") +
       (IsServer() ? "Server" : "Client") +
@@ -1459,6 +1461,7 @@ QuicStream* QuicSession::FindStream(int64_t id) {
   return it->second.get();
 }
 
+// Invoked when ngtcp2 receives an acknowledgement for stream data.
 void QuicSession::AckedStreamDataOffset(
     int64_t stream_id,
     uint64_t offset,
@@ -1476,6 +1479,9 @@ void QuicSession::AckedStreamDataOffset(
   application_->AcknowledgeStreamData(stream_id, offset, datalen);
 }
 
+// Attaches the session to the given QuicSocket. The complexity
+// here is that any CID's associated with the session have to
+// be associated with the new QuicSocket.
 void QuicSession::AddToSocket(QuicSocket* socket) {
   QuicCID scid(scid_);
   socket->AddSession(scid, BaseObjectPtr<QuicSession>(this));
@@ -1598,11 +1604,6 @@ void QuicSession::Destroy() {
   // If we're not in the closing or draining periods,
   // then we should at least attempt to send a connection
   // close to the peer.
-  // TODO(@jasnell): If the connection close happens to occur
-  // while we're still at the start of the TLS handshake, a
-  // CONNECTION_CLOSE is not going to be sent because ngtcp2
-  // currently does not yet support it. That will need to be
-  // addressed.
   if (!Ngtcp2CallbackScope::InNgtcp2CallbackScope(this) &&
       !IsInClosingPeriod() &&
       !IsInDrainingPeriod()) {
@@ -2022,8 +2023,6 @@ bool QuicSession::ReceivePacket(
         // address validation by sending a Retry packet
         // then immediately close the connection.
         if (err == NGTCP2_ERR_RETRY && IsServer()) {
-          // TODO(@jasnell): Need to verify proper ordering of
-          // scid and rcid here
           Socket()->SendRetry(
               GetNegotiatedVersion(),
               QuicCID(scid()),

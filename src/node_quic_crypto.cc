@@ -660,8 +660,9 @@ void InitializeTLS(QuicSession* session) {
 
   // Enable tracing if the `--trace-tls` command line flag
   // is used. TODO(@jasnell): Add process warning for this
-  if (session->env()->options()->trace_tls)
+  if (session->env()->options()->trace_tls) {
     ctx->EnableTrace();
+  }
 
   switch (ctx->Side()) {
     case NGTCP2_CRYPTO_SIDE_CLIENT: {
