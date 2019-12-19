@@ -90,12 +90,14 @@ void QuicSessionConfig::ResetToDefaults() {
   transport_params.stateless_reset_token_present = 0;
 }
 
-inline void SetConfig(Environment* env, int idx, uint64_t* val) {
+namespace {
+void SetConfig(Environment* env, int idx, uint64_t* val) {
   AliasedFloat64Array& buffer = env->quic_state()->quicsessionconfig_buffer;
   uint64_t flags = static_cast<uint64_t>(buffer[IDX_QUIC_SESSION_CONFIG_COUNT]);
   if (flags & (1ULL << idx))
     *val = static_cast<uint64_t>(buffer[idx]);
 }
+}  // namespace
 
 // Sets the QuicSessionConfig using an AliasedBuffer for efficiency.
 void QuicSessionConfig::Set(Environment* env,
@@ -125,6 +127,9 @@ void QuicSessionConfig::Set(Environment* env,
 
   transport_params.idle_timeout = transport_params.idle_timeout * 1000000;
 
+  // TODO(@jasnell): QUIC allows both IPv4 and IPv6 addresses to be
+  // specified. Here we're specifying one or the otherr. Need to
+  // determine if that's what we want or should we support both.
   if (preferred_addr != nullptr) {
     transport_params.preferred_address_present = 1;
     switch (preferred_addr->sa_family) {
@@ -161,6 +166,9 @@ void QuicSessionConfig::SetOriginalConnectionID(const ngtcp2_cid* ocid) {
   }
 }
 
+// TODO(@jasnell): Once both https://github.com/nodejs/quic/pull/235 and
+// https://github.com/nodejs/quic/pull/236 both land, this needs to be
+// refactored to use the pluggable stateless reset token strategy
 void QuicSessionConfig::GenerateStatelessResetToken() {
   transport_params.stateless_reset_token_present = 1;
   EntropySource(
@@ -168,6 +176,10 @@ void QuicSessionConfig::GenerateStatelessResetToken() {
       arraysize(transport_params.stateless_reset_token));
 }
 
+// TODO(@jasnell): Once both https://github.com/nodejs/quic/pull/235 and
+// https://github.com/nodejs/quic/pull/236 both land, this needs to be
+// refactored to use the pluggable stateless reset token strategy and
+// connection ID strategy.
 void QuicSessionConfig::GeneratePreferredAddressToken(ngtcp2_cid* pscid) {
   if (!transport_params.preferred_address_present)
     return;
@@ -346,24 +358,18 @@ void JSQuicSessionListener::OnCert(const char* server_name) {
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
 
-  Local<Value> servername_str;
-
-  Local<Value> argv[] = {
-    server_name == nullptr ?
-        String::Empty(env->isolate()) :
-        OneByteString(
-            env->isolate(),
-            server_name,
-            strlen(server_name))
-  };
+  Local<Value> servername = Undefined(env->isolate());
+  if (server_name != nullptr) {
+    servername = OneByteString(
+        env->isolate(),
+        server_name,
+        strlen(server_name));
+  }
 
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(Session());
-  Session()->MakeCallback(
-      env->quic_on_session_cert_function(),
-      arraysize(argv),
-      argv);
+  Session()->MakeCallback(env->quic_on_session_cert_function(), 1, &servername);
 }
 
 void JSQuicSessionListener::OnStreamHeaders(
@@ -403,7 +409,7 @@ void JSQuicSessionListener::OnOCSP(const std::string& ocsp) {
   if (ocsp.length() > 0)
     arg = Buffer::Copy(env, ocsp.c_str(), ocsp.length()).ToLocalChecked();
   BaseObjectPtr<QuicSession> ptr(Session());
-  Session()->MakeCallback(env->quic_on_session_status_function(), 1, & arg);
+  Session()->MakeCallback(env->quic_on_session_status_function(), 1, &arg);
 }
 
 void JSQuicSessionListener::OnStreamClose(
@@ -635,7 +641,9 @@ void JSQuicSessionListener::OnVersionNegotiation(
   for (size_t n = 0; n < vcnt; n++)
     versions[n] = Integer::New(env->isolate(), vers[n]);
 
-
+  // Currently, we only support one version of QUIC but in
+  // the future that may change. The callback below passes
+  // an array back to the JavaScript side to future-proof.
   Local<Value> supported =
       Integer::New(env->isolate(), supported_version);
 
@@ -664,10 +672,7 @@ void JSQuicSessionListener::OnQLog(const uint8_t* data, size_t len) {
                              v8::NewStringType::kNormal,
                              len).ToLocalChecked();
 
-  Session()->MakeCallback(
-      env->quic_on_session_qlog_function(),
-      1,
-      &str);
+  Session()->MakeCallback(env->quic_on_session_qlog_function(), 1, &str);
 }
 
 // Generates a new connection ID for this QuicSession.
