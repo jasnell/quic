@@ -1,4 +1,4 @@
-// Flags: --expose-internals
+// Flags: --expose-internals --no-warnings
 'use strict';
 const common = require('../common');
 if (!common.hasQuic)
@@ -17,20 +17,13 @@ const ca = fixtures.readKey('ca1-cert.pem', 'binary');
 const { serverSide, clientSide } = makeUDPPair();
 
 const server = quic.createSocket({
-  endpoint: { port: 0 },
   validateAddress: true,
   [kUDPHandleForTesting]: serverSide._handle,
   qlog: true
 });
 
 serverSide.afterBind();
-server.listen({
-  key,
-  cert,
-  ca,
-  rejectUnauthorized: false,
-  alpn: 'meow'
-});
+server.listen({ key, cert, ca, alpn: 'meow' });
 
 server.on('session', common.mustCall((session) => {
   gatherQlog(session, 'server');
@@ -43,14 +36,8 @@ server.on('session', common.mustCall((session) => {
 
 server.on('ready', common.mustCall(() => {
   const client = quic.createSocket({
-    endpoint: { port: 0 },
     [kUDPHandleForTesting]: clientSide._handle,
-    client: {
-      key,
-      cert,
-      ca,
-      alpn: 'meow'
-    },
+    client: { key, cert, ca, alpn: 'meow' },
     qlog: true
   });
   clientSide.afterBind();
