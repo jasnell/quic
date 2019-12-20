@@ -2186,7 +2186,7 @@ bool QuicSession::SendConnectionClose() {
   }
 }
 
-// When a server advertises a preferred address in it's initial
+// When a server advertises a preferred address in its initial
 // transport parameters, ngtcp2 on the client side will trigger
 // the OnSelectPreferredAdddress callback which will call this.
 // The paddr argument contains the advertised preferred address.
@@ -2261,7 +2261,7 @@ bool QuicSession::SendStreamData(QuicStream* stream) {
   return application_->SendStreamData(stream);
 }
 
-// Passes a serialized packet to the assocaited QuicSocket.
+// Passes a serialized packet to the associated QuicSocket.
 bool QuicSession::SendPacket(std::unique_ptr<QuicPacket> packet) {
   CHECK(!IsFlagSet(QUICSESSION_FLAG_DESTROYED));
   CHECK(!IsInDrainingPeriod());
@@ -3202,7 +3202,7 @@ int QuicSession::OnExtendMaxStreamData(
 // when ngtcp2 has determined that the TLS handshake has
 // been completed. It is important to understand that this
 // is only an indication of the local peer's handshake state.
-// The remote peer might not yet have completed it's part
+// The remote peer might not yet have completed its part
 // of the handshake.
 int QuicSession::OnHandshakeCompleted(
     ngtcp2_conn* conn,
