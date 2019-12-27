@@ -17,7 +17,7 @@ const ca = fixtures.readKey('ca1-cert.pem', 'binary');
 const { serverSide, clientSide } = makeUDPPair();
 
 const server = quic.createSocket({
-  [kUDPHandleForTesting]: serverSide._handle
+  endpoint: { [kUDPHandleForTesting]: serverSide._handle }
 });
 
 serverSide.afterBind();
@@ -38,14 +38,14 @@ server.on('session', common.mustCall((session) => {
 
 server.on('ready', common.mustCall(() => {
   const client = quic.createSocket({
-    [kUDPHandleForTesting]: clientSide._handle,
+    endpoint: { [kUDPHandleForTesting]: clientSide._handle },
     client: { key, cert, ca, alpn: 'meow' }
   });
   clientSide.afterBind();
 
   const req = client.connect({
     address: 'localhost',
-    port: server.address.port
+    port: server.endpoints[0].address.port
   });
 
   req.on('stream', common.mustCall((stream) => {

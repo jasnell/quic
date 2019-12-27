@@ -18,7 +18,7 @@ const { serverSide, clientSide } = makeUDPPair();
 
 const server = quic.createSocket({
   validateAddress: true,
-  [kUDPHandleForTesting]: serverSide._handle,
+  endpoint: { [kUDPHandleForTesting]: serverSide._handle },
   qlog: true
 });
 
@@ -36,7 +36,7 @@ server.on('session', common.mustCall((session) => {
 
 server.on('ready', common.mustCall(() => {
   const client = quic.createSocket({
-    [kUDPHandleForTesting]: clientSide._handle,
+    endpoint: { [kUDPHandleForTesting]: clientSide._handle },
     client: { key, cert, ca, alpn: 'meow' },
     qlog: true
   });
@@ -44,7 +44,7 @@ server.on('ready', common.mustCall(() => {
 
   const req = client.connect({
     address: 'localhost',
-    port: server.address.port,
+    port: server.endpoints[0].address.port,
     qlog: true
   });
 
