@@ -24,7 +24,7 @@ const ca = fixtures.readKey('ca1-cert.pem', 'binary');
 
 const server = quic.createSocket({ validateAddress: true });
 
-server.listen({ key, cert, ca, alpn: 'meow' rejectUnauthorized: false });
+server.listen({ key, cert, ca, alpn: 'meow', rejectUnauthorized: false });
 
 server.on('session', common.mustCall((session) => {
   session.on('secure', common.mustCall((servername, alpn, cipher) => {

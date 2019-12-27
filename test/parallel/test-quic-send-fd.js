@@ -26,7 +26,7 @@ for (const { variant, offset, length } of variants) {
   const server = quic.createSocket({ validateAddress: true });
   let fd;
 
-  server.listen({ key, cert, ca, alpn: 'meow' rejectUnauthorized: false });
+  server.listen({ key, cert, ca, alpn: 'meow', rejectUnauthorized: false });
 
   server.on('session', common.mustCall((session) => {
     session.on('secure', common.mustCall((servername, alpn, cipher) => {

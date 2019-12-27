@@ -131,9 +131,9 @@ socket.on('ready', common.mustCall(() => {
 
   // On Windows, fd will always be undefined.
   if (common.isWindows)
-    assert.strictEqual(socket.fd, undefined);
+    assert.strictEqual(endpoint.fd, undefined);
   else
-    assert.strictEqual(typeof socket.fd, 'number');
+    assert.strictEqual(typeof endpoint.fd, 'number');
 
   endpoint.setTTL(1);
   endpoint.setMulticastTTL(1);
