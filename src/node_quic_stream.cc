@@ -406,7 +406,7 @@ void QuicStream::SetHeadersKind(QuicStreamHeadersKind kind) {
 bool QuicStream::AddHeader(std::unique_ptr<QuicHeader> header) {
   Debug(this, "Header Added");
   size_t len = header->GetLength();
-  auto app = Session()->Application();
+  QuicApplication* app = Session()->Application();
   // We cannot add the header if we've either reached
   // * the max number of header pairs or
   // * the max number of header bytes
