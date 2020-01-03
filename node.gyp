@@ -852,6 +852,7 @@
             'src/quic/node_quic_session.h',
             'src/quic/node_quic_session-inl.h',
             'src/quic/node_quic_socket.h',
+            'src/quic/node_quic_socket-inl.h',
             'src/quic/node_quic_stream.h',
             'src/quic/node_quic_stream-inl.h',
             'src/quic/node_quic_util.h',
