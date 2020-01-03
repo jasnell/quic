@@ -58,6 +58,8 @@ void PrintErrorString(const char* format, ...);
   V(ERR_STRING_TOO_LONG, Error)                                              \
   V(ERR_TLS_INVALID_PROTOCOL_METHOD, TypeError)                              \
   V(ERR_TRANSFERRING_EXTERNALIZED_SHAREDARRAYBUFFER, TypeError)              \
+  V(ERR_QUIC_CANNOT_SET_GROUPS, Error)                                       \
+  V(ERR_QUIC_FAILURE_SETTING_SNI_CONTEXT, Error)
 
 #define V(code, type)                                                         \
   inline v8::Local<v8::Value> code(v8::Isolate* isolate,                      \
@@ -101,6 +103,8 @@ void PrintErrorString(const char* format, ...);
     "Script execution was interrupted by `SIGINT`")                          \
   V(ERR_TRANSFERRING_EXTERNALIZED_SHAREDARRAYBUFFER,                         \
     "Cannot serialize externalized SharedArrayBuffer")                       \
+  V(ERR_QUIC_CANNOT_SET_GROUPS, "Cannot set groups")                         \
+  V(ERR_QUIC_FAILURE_SETTING_SNI_CONTEXT, "Failure setting SNI context")
 
 #define V(code, message)                                                     \
   inline v8::Local<v8::Value> code(v8::Isolate* isolate) {                   \
