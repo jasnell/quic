@@ -17,24 +17,17 @@ class QuicBuffer;
 
 constexpr size_t MAX_VECTOR_COUNT = 16;
 
-// QuicBuffer an internal linked list of uv_buf_t instances
-// representing data that is to be sent. All data in the
-// Buffer has to be retained until it is Consumed or Canceled.
-// For QUIC, the data is not consumed until an explicit ack
-// is received or we know that we do not need the data.
-
 typedef std::function<void(int status)> done_cb;
-
 typedef std::function<void(uv_buf_t buf)> add_fn;
-
-// Default non-op done handler.
-inline void default_quicbufferchunk_done(int status);
 
 // A QuicBufferChunk contains the actual buffered data
 // along with a callback to be called when the data has
 // been consumed.
 class QuicBufferChunk : public MemoryRetainer {
  public:
+  // Default non-op done handler.
+  static inline void default_done(int status);
+
   // In this variant, the QuicBufferChunk owns the underlying
   // data storage within a MaybeStackBuffer. The data will be
   // freed when the QuicBufferChunk is destroyed.
@@ -64,7 +57,7 @@ class QuicBufferChunk : public MemoryRetainer {
   // data. See QuicCryptoContext::WriteHandshake
   MaybeStackBuffer<uint8_t, 200> data_buf_;
   uv_buf_t buf_;
-  done_cb done_ = default_quicbufferchunk_done;
+  done_cb done_ = default_done;
   size_t offset_ = 0;
   size_t roffset_ = 0;
   bool done_called_ = false;
@@ -120,7 +113,7 @@ class QuicBuffer : public MemoryRetainer {
       length_(src.length_),
       rlength_(src.rlength_) {
     root_ = std::move(src.root_);
-    reset(&src);
+    Reset(&src);
   }
 
   inline QuicBuffer& operator=(QuicBuffer&& src) noexcept;
@@ -139,8 +132,9 @@ class QuicBuffer : public MemoryRetainer {
   size_t Push(
       uv_buf_t* bufs,
       size_t nbufs,
-      done_cb done = default_quicbufferchunk_done);
+      done_cb done = QuicBufferChunk::default_done);
 
+  // Pushes a single QuicBufferChunk into the linked list
   void Push(std::unique_ptr<QuicBufferChunk> chunk);
 
   // Consume the given number of bytes within the buffer. If amount is
@@ -195,7 +189,7 @@ class QuicBuffer : public MemoryRetainer {
   void SeekHeadOffset(ssize_t amount);
 
   void MemoryInfo(MemoryTracker* tracker) const override {
-    tracker->TrackFieldWithSize("length", length_);
+    tracker->TrackField("root", root_);
   }
   SET_MEMORY_INFO_NAME(QuicBuffer);
   SET_SELF_SIZE(QuicBuffer);
@@ -205,7 +199,7 @@ class QuicBuffer : public MemoryRetainer {
   size_t DrainInto(add_fn add_to_list, size_t* length, size_t max_count);
   bool Pop(int status = 0);
   inline void Push(uv_buf_t buf, done_cb done = nullptr);
-  inline static void reset(QuicBuffer* buf);
+  inline static void Reset(QuicBuffer* buf);
 
   std::unique_ptr<QuicBufferChunk> root_;
   QuicBufferChunk* head_ = nullptr;  // Current Read Position

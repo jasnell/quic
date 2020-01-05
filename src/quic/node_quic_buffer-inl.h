@@ -11,6 +11,8 @@ namespace node {
 
 namespace quic {
 
+void QuicBufferChunk::default_done(int status) {}
+
 QuicBufferChunk::QuicBufferChunk(size_t len)
     : data_buf_(len),
       buf_(uv_buf_init(reinterpret_cast<char*>(data_buf_.out()), len)),
@@ -76,7 +78,7 @@ void QuicBuffer::Push(uv_buf_t buf, done_cb done) {
   Push(std::move(chunk));
 }
 
-void QuicBuffer::reset(QuicBuffer* buffer) {
+void QuicBuffer::Reset(QuicBuffer* buffer) {
   buffer->head_ = nullptr;
   buffer->tail_ = nullptr;
   buffer->size_ = 0;
@@ -110,8 +112,6 @@ size_t QuicBuffer::DrainInto(
   }, length, max_count);
   CHECK_LE(*count, max_count);
 }
-
-void default_quicbufferchunk_done(int status) {}
 
 }  // namespace quic
 }  // namespace node

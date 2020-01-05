@@ -33,7 +33,7 @@ QuicBuffer& QuicBuffer::operator+=(QuicBuffer&& src) noexcept {
   rlength_ += src.length_;
   size_ += src.size_;
   count_ += src.size_;
-  reset(&src);
+  Reset(&src);
   return *this;
 }
 
@@ -89,9 +89,10 @@ size_t QuicBuffer::SeekHead(size_t amount) {
 }
 
 void QuicBuffer::SeekHeadOffset(ssize_t amount) {
-  if (amount < 0)
-    return;
-  size_t amt = std::min(amount < 0 ? length_ : amount, length_);
+  // If amount is negative, then we use the full length
+  size_t amt = UNLIKELY(amount < 0) ?
+      length_ :
+      std::min(length_, static_cast<size_t>(amount));
   while (head_ && amt > 0) {
     size_t len = head_->buf_.len - head_->roffset_;
     // If the remaining length in the head is greater than the
