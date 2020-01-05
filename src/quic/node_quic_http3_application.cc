@@ -1,6 +1,7 @@
 #include "node.h"
 #include "debug_utils.h"
 #include "node_mem-inl.h"
+#include "node_quic_buffer-inl.h"
 #include "node_quic_http3_application.h"
 #include "node_quic_session-inl.h"
 #include "node_quic_socket.h"

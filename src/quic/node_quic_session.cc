@@ -11,7 +11,7 @@
 #include "node_errors.h"
 #include "node_internals.h"
 #include "node_mem-inl.h"
-#include "node_quic_buffer.h"
+#include "node_quic_buffer-inl.h"
 #include "node_quic_crypto.h"
 #include "node_quic_session.h"  // NOLINT(build/include_inline)
 #include "node_quic_session-inl.h"
