@@ -61,14 +61,12 @@ size_t QuicBuffer::Push(uv_buf_t* bufs, size_t nbufs, done_cb done) {
   return len;
 }
 
-size_t QuicBuffer::Push(MallocedBuffer<uint8_t>&& buffer, done_cb done) {
-  if (buffer.size == 0) {
-    done(0);
+size_t QuicBuffer::Push(MallocedBuffer<uint8_t>&& buffer) {
+  if (buffer.size == 0)
     return 0;
-  }
   length_ += buffer.size;
   rlength_ += buffer.size;
-  Push(new quic_buffer_chunk(std::move(buffer), done));
+  Push(new quic_buffer_chunk(std::move(buffer)));
   return buffer.size;
 }
 

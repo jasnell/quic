@@ -11,12 +11,10 @@ namespace node {
 
 namespace quic {
 
-quic_buffer_chunk::quic_buffer_chunk(
-    MallocedBuffer<uint8_t>&& buf_,
-    done_cb done_)
+quic_buffer_chunk::quic_buffer_chunk(MallocedBuffer<uint8_t>&& buf_)
   : quic_buffer_chunk(uv_buf_init(reinterpret_cast<char*>(buf_.data),
-                                  buf_.size),
-                      done_) {
+                                  buf_.size)) {
+  done_called = true;
   data_buf = std::move(buf_);
 }
 

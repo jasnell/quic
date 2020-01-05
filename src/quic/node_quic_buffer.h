@@ -43,9 +43,7 @@ struct quic_buffer_chunk : public MemoryRetainer {
   std::unique_ptr<quic_buffer_chunk> next;
 
   inline explicit quic_buffer_chunk(uv_buf_t buf_);
-  inline quic_buffer_chunk(
-      MallocedBuffer<uint8_t>&& buf_,
-      done_cb done_);
+  inline explicit quic_buffer_chunk(MallocedBuffer<uint8_t>&& buf_);
   inline quic_buffer_chunk(uv_buf_t buf_, done_cb done_);
   inline ~quic_buffer_chunk() override;
   inline void Done(int status);
@@ -126,9 +124,7 @@ class QuicBuffer : public MemoryRetainer {
   // Push a single malloc buf into the buffer.
   // The done_cb will be invoked when the buf is consumed
   // and popped out of the internal linked list.
-  size_t Push(
-      MallocedBuffer<uint8_t>&& buffer,
-      done_cb done = default_quic_buffer_chunk_done);
+  size_t Push(MallocedBuffer<uint8_t>&& buffer);
 
   // Consume the given number of bytes within the buffer. If amount is
   // negative, all buffered bytes that are available to be consumed are
