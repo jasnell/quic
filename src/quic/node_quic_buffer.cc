@@ -22,12 +22,12 @@ QuicBuffer& QuicBuffer::operator+=(QuicBuffer&& src) noexcept {
     return *this = std::move(src);
   }
 
-  tail_->next = std::move(src.root_);
+  tail_->next_ = std::move(src.root_);
   // If head_ is null, then it had been read to the
   // end, set the new head_ equal to the appended
   // root.
   if (head_ == nullptr)
-    head_ = tail_->next.get();
+    head_ = tail_->next_.get();
   tail_ = src.tail_;
   length_ += src.length_;
   rlength_ += src.length_;
@@ -61,24 +61,15 @@ size_t QuicBuffer::Push(uv_buf_t* bufs, size_t nbufs, done_cb done) {
   return len;
 }
 
-size_t QuicBuffer::Push(MallocedBuffer<uint8_t>&& buffer) {
-  if (buffer.size == 0)
-    return 0;
-  length_ += buffer.size;
-  rlength_ += buffer.size;
-  Push(new quic_buffer_chunk(std::move(buffer)));
-  return buffer.size;
-}
-
-void QuicBuffer::Push(quic_buffer_chunk* chunk) {
+void QuicBuffer::Push(std::unique_ptr<QuicBufferChunk> chunk) {
   size_++;
   count_++;
   if (!tail_) {
-    root_.reset(chunk);
+    root_ = std::move(chunk);
     head_ = tail_ = root_.get();
   } else {
-    tail_->next.reset(chunk);
-    tail_ = tail_->next.get();
+    tail_->next_ = std::move(chunk);
+    tail_ = tail_->next_.get();
     if (!head_)
       head_ = tail_;
   }
@@ -88,11 +79,11 @@ size_t QuicBuffer::SeekHead(size_t amount) {
   size_t n = 0;
   size_t amt = amount;
   while (head_ != nullptr && amt > 0) {
-    head_ = head_->next.get();
+    head_ = head_->next_.get();
     n++;
     amt--;
     count_--;
-    rlength_ -= head_ == nullptr ? 0 : head_->buf.len;
+    rlength_ -= head_ == nullptr ? 0 : head_->buf_.len;
   }
   return n;
 }
@@ -102,11 +93,11 @@ void QuicBuffer::SeekHeadOffset(ssize_t amount) {
     return;
   size_t amt = std::min(amount < 0 ? length_ : amount, length_);
   while (head_ && amt > 0) {
-    size_t len = head_->buf.len - head_->roffset;
+    size_t len = head_->buf_.len - head_->roffset_;
     // If the remaining length in the head is greater than the
     // amount we're seeking, just adjust the roffset
     if (len > amt) {
-      head_->roffset += amt;
+      head_->roffset_ += amt;
       rlength_ -= amt;
       break;
     }
@@ -114,7 +105,7 @@ void QuicBuffer::SeekHeadOffset(ssize_t amount) {
     // one space and iterate from there.
     amt -= len;
     rlength_ -= len;
-    head_ = head_->next.get();
+    head_ = head_->next_.get();
   }
 }
 
@@ -125,18 +116,18 @@ size_t QuicBuffer::DrainInto(
   size_t len = 0;
   size_t count = 0;
   bool seen_head = false;
-  quic_buffer_chunk* pos = head_;
+  QuicBufferChunk* pos = head_;
   if (pos == nullptr)
     return 0;
   if (length != nullptr) *length = 0;
   while (pos != nullptr && count < max_count) {
     count++;
-    size_t datalen = pos->buf.len - pos->roffset;
+    size_t datalen = pos->buf_.len - pos->roffset_;
     if (length != nullptr) *length += datalen;
-    add_to_list(uv_buf_init(pos->buf.base + pos->roffset, datalen));
+    add_to_list(uv_buf_init(pos->buf_.base + pos->roffset_, datalen));
     if (pos == head_) seen_head = true;
     if (seen_head) len++;
-    pos = pos->next.get();
+    pos = pos->next_.get();
   }
   return len;
 }
@@ -144,8 +135,8 @@ size_t QuicBuffer::DrainInto(
 bool QuicBuffer::Pop(int status) {
   if (!root_)
     return false;
-  std::unique_ptr<quic_buffer_chunk> root(std::move(root_));
-  root_ = std::move(root.get()->next);
+  std::unique_ptr<QuicBufferChunk> root(std::move(root_));
+  root_ = std::move(root.get()->next_);
   size_--;
 
   if (head_ == root.get())
@@ -161,14 +152,10 @@ void QuicBuffer::Consume(int status, ssize_t amount) {
   size_t amt = std::min(amount < 0 ? length_ : amount, length_);
   while (root_ && amt > 0) {
     auto root = root_.get();
-    // Never allow for partial consumption of head when using a
-    // non-cancel status
-    // if (status == 0 && head_ == root)
-    //   break;
-    size_t len = root->buf.len - root->offset;
+    size_t len = root->buf_.len - root->offset_;
     if (len > amt) {
       length_ -= amt;
-      root->offset += amt;
+      root->offset_ += amt;
       break;
     }
     length_ -= len;

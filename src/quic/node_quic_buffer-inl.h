@@ -11,35 +11,32 @@ namespace node {
 
 namespace quic {
 
-quic_buffer_chunk::quic_buffer_chunk(MallocedBuffer<uint8_t>&& buf_)
-  : quic_buffer_chunk(uv_buf_init(reinterpret_cast<char*>(buf_.data),
-                                  buf_.size)) {
-  done_called = true;
-  data_buf = std::move(buf_);
+QuicBufferChunk::QuicBufferChunk(size_t len)
+    : data_buf_(len),
+      buf_(uv_buf_init(reinterpret_cast<char*>(data_buf_.out()), len)),
+      done_called_(true) {}
+
+QuicBufferChunk::QuicBufferChunk(uv_buf_t buf_, done_cb done)
+    : buf_(buf_) {
+  if (done != nullptr)
+    done_ = std::move(done);
 }
 
-quic_buffer_chunk::quic_buffer_chunk(uv_buf_t buf_) : buf(buf_) {}
-
-quic_buffer_chunk::quic_buffer_chunk(
-    uv_buf_t buf_,
-    done_cb done_)
-  : quic_buffer_chunk(buf_) {
-  done = std::move(done_);
+QuicBufferChunk::~QuicBufferChunk() {
+  CHECK(done_called_);
 }
 
-quic_buffer_chunk::~quic_buffer_chunk() {
-  CHECK(done_called);
+void QuicBufferChunk::Done(int status) {
+  if (done_called_) return;
+  done_called_ = true;
+  if (done_ != nullptr)
+    std::move(done_)(status);
 }
 
-void quic_buffer_chunk::Done(int status) {
-  done_called = true;
-  std::move(done)(status);
+void QuicBufferChunk::MemoryInfo(MemoryTracker* tracker) const {
+  tracker->TrackField("data_buf", data_buf_.length());
+  tracker->TrackField("next", next_);
 }
-
-void quic_buffer_chunk::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackFieldWithSize("buf", buf.len);
-}
-
 
 QuicBuffer& QuicBuffer::operator=(QuicBuffer&& src) noexcept {
   if (this == &src) return *this;
@@ -69,16 +66,14 @@ uv_buf_t QuicBuffer::Head() {
   if (head_ == nullptr)
     return uv_buf_init(nullptr, 0);
   return uv_buf_init(
-      head_->buf.base + head_->roffset,
-      head_->buf.len - head_->roffset);
-}
-
-void QuicBuffer::Push(uv_buf_t buf) {
-  Push(new quic_buffer_chunk(buf));
+      head_->buf_.base + head_->roffset_,
+      head_->buf_.len - head_->roffset_);
 }
 
 void QuicBuffer::Push(uv_buf_t buf, done_cb done) {
-  Push(new quic_buffer_chunk(buf, done));
+  std::unique_ptr<QuicBufferChunk> chunk =
+      std::make_unique<QuicBufferChunk>(buf, done);
+  Push(std::move(chunk));
 }
 
 void QuicBuffer::reset(QuicBuffer* buffer) {
@@ -116,7 +111,7 @@ size_t QuicBuffer::DrainInto(
   CHECK_LE(*count, max_count);
 }
 
-void default_quic_buffer_chunk_done(int status) {}
+void default_quicbufferchunk_done(int status) {}
 
 }  // namespace quic
 }  // namespace node

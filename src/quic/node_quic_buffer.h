@@ -13,6 +13,8 @@
 namespace node {
 namespace quic {
 
+class QuicBuffer;
+
 constexpr size_t MAX_VECTOR_COUNT = 16;
 
 // QuicBuffer an internal linked list of uv_buf_t instances
@@ -26,34 +28,52 @@ typedef std::function<void(int status)> done_cb;
 typedef std::function<void(uv_buf_t buf)> add_fn;
 
 // Default non-op done handler.
-inline void default_quic_buffer_chunk_done(int status);
+inline void default_quicbufferchunk_done(int status);
 
-// A quic_buffer_chunk contains the actual buffered data
+// A QuicBufferChunk contains the actual buffered data
 // along with a callback to be called when the data has
 // been consumed.
-struct quic_buffer_chunk : public MemoryRetainer {
-  // TODO(@jasnell): Investigate if we can use a MaybeStackBuffer
-  // instead at some point.
-  MallocedBuffer<uint8_t> data_buf;
-  uv_buf_t buf;
-  done_cb done = default_quic_buffer_chunk_done;
-  size_t offset = 0;
-  size_t roffset = 0;
-  bool done_called = false;
-  std::unique_ptr<quic_buffer_chunk> next;
+class QuicBufferChunk : public MemoryRetainer {
+ public:
+  // In this variant, the QuicBufferChunk owns the underlying
+  // data storage within a MaybeStackBuffer. The data will be
+  // freed when the QuicBufferChunk is destroyed.
+  inline explicit QuicBufferChunk(size_t len);
 
-  inline explicit quic_buffer_chunk(uv_buf_t buf_);
-  inline explicit quic_buffer_chunk(MallocedBuffer<uint8_t>&& buf_);
-  inline quic_buffer_chunk(uv_buf_t buf_, done_cb done_);
-  inline ~quic_buffer_chunk() override;
+  // In this variant, the QuicBufferChunk only maintains a
+  // pointer to the underlying data buffer. The QuicBufferChunk
+  // does not take ownership of the buffer. The done callback
+  // is invoked to let the caller know when the chunk is no
+  // longer being used.
+  inline QuicBufferChunk(uv_buf_t buf_, done_cb done_);
+
+  inline ~QuicBufferChunk() override;
   inline void Done(int status);
   inline void MemoryInfo(MemoryTracker* tracker) const override;
 
-  SET_MEMORY_INFO_NAME(quic_buffer_chunk)
-  SET_SELF_SIZE(quic_buffer_chunk)
+  uint8_t* out() { return reinterpret_cast<uint8_t*>(buf_.base); }
+
+  SET_MEMORY_INFO_NAME(QuicBufferChunk)
+  SET_SELF_SIZE(QuicBufferChunk)
+
+ private:
+  // In practice, the amount of data stored in data_buf_ can vary
+  // broadly from double to quadruple digits. 200 should cover the
+  // most common cases but we can adjust it up or down if necessary
+  // later. Currently, data_buf_ is only used when writing handshake
+  // data. See QuicCryptoContext::WriteHandshake
+  MaybeStackBuffer<uint8_t, 200> data_buf_;
+  uv_buf_t buf_;
+  done_cb done_ = default_quicbufferchunk_done;
+  size_t offset_ = 0;
+  size_t roffset_ = 0;
+  bool done_called_ = false;
+  std::unique_ptr<QuicBufferChunk> next_;
+
+  friend class QuicBuffer;
 };
 
-// A QuicBuffer is a linked-list of quic_buffer_chunk instances.
+// A QuicBuffer is a linked-list of QuicBufferChunk instances.
 // There are three significant pointers: root_, head_, and tail_.
 //   * root_ is the base of the linked list
 //   * head_ is a pointer to the current read position of the linked list
@@ -61,13 +81,13 @@ struct quic_buffer_chunk : public MemoryRetainer {
 // Items are dropped from the linked list only when either Consume() or
 // Cancel() is called. Consume() will consume a given number of bytes up
 // to, but not including the read head_. Cancel() will consume all remaining
-// bytes in the linked list. As whole quic_buffer_chunk instances are
+// bytes in the linked list. As whole QuicBufferChunk instances are
 // consumed, the corresponding Done callback will be invoked, allowing
 // any memory to be freed up.
 //
 // Use SeekHead(n) to advance the read head_ forward n positions.
 //
-// DrainInto() will drain the remaining quic_buffer_chunk instances
+// DrainInto() will drain the remaining QuicBufferChunk instances
 // into a vector and will advance the read head_ to the end of the
 // QuicBuffer. The function will return the number of positions drained
 // which would then be passed to SeekHead(n) to advance the read head.
@@ -119,12 +139,9 @@ class QuicBuffer : public MemoryRetainer {
   size_t Push(
       uv_buf_t* bufs,
       size_t nbufs,
-      done_cb done = default_quic_buffer_chunk_done);
+      done_cb done = default_quicbufferchunk_done);
 
-  // Push a single malloc buf into the buffer.
-  // The done_cb will be invoked when the buf is consumed
-  // and popped out of the internal linked list.
-  size_t Push(MallocedBuffer<uint8_t>&& buffer);
+  void Push(std::unique_ptr<QuicBufferChunk> chunk);
 
   // Consume the given number of bytes within the buffer. If amount is
   // negative, all buffered bytes that are available to be consumed are
@@ -187,18 +204,18 @@ class QuicBuffer : public MemoryRetainer {
   void Consume(int status, ssize_t amount);
   size_t DrainInto(add_fn add_to_list, size_t* length, size_t max_count);
   bool Pop(int status = 0);
-  void Push(quic_buffer_chunk* chunk);
-  inline void Push(uv_buf_t buf);
-  inline void Push(uv_buf_t buf, done_cb done);
+  inline void Push(uv_buf_t buf, done_cb done = nullptr);
   inline static void reset(QuicBuffer* buf);
 
-  std::unique_ptr<quic_buffer_chunk> root_;
-  quic_buffer_chunk* head_ = nullptr;  // Current Read Position
-  quic_buffer_chunk* tail_ = nullptr;  // Current Write Position
+  std::unique_ptr<QuicBufferChunk> root_;
+  QuicBufferChunk* head_ = nullptr;  // Current Read Position
+  QuicBufferChunk* tail_ = nullptr;  // Current Write Position
   size_t size_ = 0;
   size_t count_ = 0;
   size_t length_ = 0;
   size_t rlength_ = 0;
+
+  friend class QuicBufferChunk;
 };
 
 }  // namespace quic
