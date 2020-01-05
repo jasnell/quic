@@ -114,8 +114,6 @@ class QuicBuffer : public MemoryRetainer {
     CHECK_EQ(length_, 0);
   }
 
-  size_t Copy(uv_buf_t* bufs, size_t nbufs);
-
   // Push one or more uv_buf_t instances into the buffer.
   // the done_cb callback will be invoked when the last
   // uv_buf_t in the bufs array is consumed and popped out

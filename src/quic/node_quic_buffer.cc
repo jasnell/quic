@@ -37,17 +37,6 @@ QuicBuffer& QuicBuffer::operator+=(QuicBuffer&& src) noexcept {
   return *this;
 }
 
-size_t QuicBuffer::Copy(uv_buf_t* bufs, size_t nbufs) {
-  size_t total = 0;
-  for (size_t n = 0; n < nbufs; n++) {
-    MallocedBuffer<uint8_t> data(bufs[n].len);
-    memcpy(data.data, bufs[n].base, bufs[n].len);
-    total += bufs[n].len;
-    Push(std::move(data));
-  }
-  return total;
-}
-
 size_t QuicBuffer::Push(uv_buf_t* bufs, size_t nbufs, done_cb done) {
   size_t len = 0;
   if (nbufs == 0 || bufs == nullptr || IsEmptyBuffer(bufs[0])) {
@@ -81,6 +70,20 @@ size_t QuicBuffer::Push(MallocedBuffer<uint8_t>&& buffer, done_cb done) {
   rlength_ += buffer.size;
   Push(new quic_buffer_chunk(std::move(buffer), done));
   return buffer.size;
+}
+
+void QuicBuffer::Push(quic_buffer_chunk* chunk) {
+  size_++;
+  count_++;
+  if (!tail_) {
+    root_.reset(chunk);
+    head_ = tail_ = root_.get();
+  } else {
+    tail_->next.reset(chunk);
+    tail_ = tail_->next.get();
+    if (!head_)
+      head_ = tail_;
+  }
 }
 
 size_t QuicBuffer::SeekHead(size_t amount) {
@@ -138,20 +141,6 @@ size_t QuicBuffer::DrainInto(
     pos = pos->next.get();
   }
   return len;
-}
-
-void QuicBuffer::Push(quic_buffer_chunk* chunk) {
-  size_++;
-  count_++;
-  if (!tail_) {
-    root_.reset(chunk);
-    head_ = tail_ = root_.get();
-  } else {
-    tail_->next.reset(chunk);
-    tail_ = tail_->next.get();
-    if (!head_)
-      head_ = tail_;
-  }
 }
 
 bool QuicBuffer::Pop(int status) {
