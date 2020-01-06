@@ -18,7 +18,6 @@ class QuicBuffer;
 constexpr size_t MAX_VECTOR_COUNT = 16;
 
 typedef std::function<void(int status)> done_cb;
-typedef std::function<void(uv_buf_t buf)> add_fn;
 
 // A QuicBufferChunk contains the actual buffered data
 // along with a callback to be called when the data has
@@ -42,9 +41,10 @@ class QuicBufferChunk : public MemoryRetainer {
 
   inline ~QuicBufferChunk() override;
   inline void Done(int status);
-  inline void MemoryInfo(MemoryTracker* tracker) const override;
 
   uint8_t* out() { return reinterpret_cast<uint8_t*>(buf_.base); }
+
+ void MemoryInfo(MemoryTracker* tracker) const override;
 
   SET_MEMORY_INFO_NAME(QuicBufferChunk)
   SET_SELF_SIZE(QuicBufferChunk)
@@ -196,7 +196,8 @@ class QuicBuffer : public MemoryRetainer {
 
  private:
   void Consume(int status, ssize_t amount);
-  size_t DrainInto(add_fn add_to_list, size_t* length, size_t max_count);
+  template <typename Fn>
+  inline size_t DrainInto(Fn&& add_to_list, size_t* length, size_t max_count);
   bool Pop(int status = 0);
   inline void Push(uv_buf_t buf, done_cb done = nullptr);
   inline static void Reset(QuicBuffer* buf);

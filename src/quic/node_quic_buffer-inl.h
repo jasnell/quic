@@ -35,11 +35,6 @@ void QuicBufferChunk::Done(int status) {
     std::move(done_)(status);
 }
 
-void QuicBufferChunk::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("data_buf", data_buf_.length());
-  tracker->TrackField("next", next_);
-}
-
 QuicBuffer& QuicBuffer::operator=(QuicBuffer&& src) noexcept {
   if (this == &src) return *this;
   this->~QuicBuffer();
@@ -52,16 +47,6 @@ size_t QuicBuffer::Cancel(int status) {
   size_t remaining = Length();
   Consume(status, -1);
   return remaining;
-}
-
-size_t QuicBuffer::DrainInto(
-    std::vector<uv_buf_t>* list,
-    size_t* length,
-    size_t max_count) {
-  return DrainInto(
-      [&](uv_buf_t buf) { list->push_back(buf); },
-      length,
-      max_count);
 }
 
 uv_buf_t QuicBuffer::Head() {
@@ -85,6 +70,16 @@ void QuicBuffer::Reset(QuicBuffer* buffer) {
   buffer->length_ = 0;
   buffer->rlength_ = 0;
   buffer->count_ = 0;
+}
+
+size_t QuicBuffer::DrainInto(
+    std::vector<uv_buf_t>* list,
+    size_t* length,
+    size_t max_count) {
+  return DrainInto(
+      [&](uv_buf_t buf) { list->push_back(buf); },
+      length,
+      max_count);
 }
 
 template <typename T>
@@ -111,6 +106,30 @@ size_t QuicBuffer::DrainInto(
     *count += 1;
   }, length, max_count);
   CHECK_LE(*count, max_count);
+}
+
+template <typename Fn>
+size_t QuicBuffer::DrainInto(
+    Fn&& add_to_list,
+    size_t* length,
+    size_t max_count) {
+  size_t len = 0;
+  size_t count = 0;
+  bool seen_head = false;
+  QuicBufferChunk* pos = head_;
+  if (pos == nullptr)
+    return 0;
+  if (length != nullptr) *length = 0;
+  while (pos != nullptr && count < max_count) {
+    count++;
+    size_t datalen = pos->buf_.len - pos->roffset_;
+    if (length != nullptr) *length += datalen;
+    add_to_list(uv_buf_init(pos->buf_.base + pos->roffset_, datalen));
+    if (pos == head_) seen_head = true;
+    if (seen_head) len++;
+    pos = pos->next_.get();
+  }
+  return len;
 }
 
 }  // namespace quic

@@ -16,6 +16,11 @@ inline bool IsEmptyBuffer(const uv_buf_t& buf) {
 }
 }  // namespace
 
+void QuicBufferChunk::MemoryInfo(MemoryTracker* tracker) const {
+  tracker->TrackField("data_buf", data_buf_.length());
+  tracker->TrackField("next", next_);
+}
+
 QuicBuffer& QuicBuffer::operator+=(QuicBuffer&& src) noexcept {
   if (tail_ == nullptr) {
     // If this thing is empty, just do a move...
@@ -108,29 +113,6 @@ void QuicBuffer::SeekHeadOffset(ssize_t amount) {
     rlength_ -= len;
     head_ = head_->next_.get();
   }
-}
-
-size_t QuicBuffer::DrainInto(
-    add_fn add_to_list,
-    size_t* length,
-    size_t max_count) {
-  size_t len = 0;
-  size_t count = 0;
-  bool seen_head = false;
-  QuicBufferChunk* pos = head_;
-  if (pos == nullptr)
-    return 0;
-  if (length != nullptr) *length = 0;
-  while (pos != nullptr && count < max_count) {
-    count++;
-    size_t datalen = pos->buf_.len - pos->roffset_;
-    if (length != nullptr) *length += datalen;
-    add_to_list(uv_buf_init(pos->buf_.base + pos->roffset_, datalen));
-    if (pos == head_) seen_head = true;
-    if (seen_head) len++;
-    pos = pos->next_.get();
-  }
-  return len;
 }
 
 bool QuicBuffer::Pop(int status) {

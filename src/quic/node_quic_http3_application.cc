@@ -10,6 +10,7 @@
 #include "node_sockaddr-inl.h"
 #include "node_http_common-inl.h"
 
+#include <ngtcp2/ngtcp2.h>
 #include <nghttp3/nghttp3.h>
 #include <algorithm>
 #include <string>

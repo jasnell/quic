@@ -8,6 +8,8 @@
 #include "node_sockaddr-inl.h"
 #include <ngtcp2/ngtcp2.h>
 
+#include <vector>
+
 namespace node {
 namespace quic {
 
