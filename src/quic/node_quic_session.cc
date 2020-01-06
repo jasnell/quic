@@ -1194,7 +1194,7 @@ void QuicCryptoContext::WriteHandshake(
         datalen,
         crypto_level_name(level));
   std::unique_ptr<QuicBufferChunk> buffer =
-    std::make_unique<QuicBufferChunk>(datalen);
+      std::make_unique<QuicBufferChunk>(datalen);
   memcpy(buffer->out(), data, datalen);
   session_->session_stats_.handshake_send_at = uv_hrtime();
   CHECK_EQ(
