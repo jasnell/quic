@@ -25,7 +25,7 @@ typedef std::function<void(int status)> done_cb;
 class QuicBufferChunk : public MemoryRetainer {
  public:
   // Default non-op done handler.
-  static inline void default_done(int status);
+  static void default_done(int status) {}
 
   // In this variant, the QuicBufferChunk owns the underlying
   // data storage within a MaybeStackBuffer. The data will be
