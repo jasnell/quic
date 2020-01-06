@@ -12,8 +12,8 @@ namespace node {
 namespace quic {
 
 QuicBufferChunk::QuicBufferChunk(size_t len)
-    : data_buf_(len),
-      buf_(uv_buf_init(reinterpret_cast<char*>(data_buf_.out()), len)),
+    : data_buf_(len, 0),
+      buf_(uv_buf_init(reinterpret_cast<char*>(data_buf_.data()), len)),
       done_called_(true) {}
 
 QuicBufferChunk::QuicBufferChunk(uv_buf_t buf_, done_cb done)

@@ -10,6 +10,8 @@
 #include "util.h"
 #include "uv.h"
 
+#include <vector>
+
 namespace node {
 namespace quic {
 
@@ -50,12 +52,7 @@ class QuicBufferChunk : public MemoryRetainer {
   SET_SELF_SIZE(QuicBufferChunk)
 
  private:
-  // In practice, the amount of data stored in data_buf_ can vary
-  // broadly from double to quadruple digits. 200 should cover the
-  // most common cases but we can adjust it up or down if necessary
-  // later. Currently, data_buf_ is only used when writing handshake
-  // data. See QuicCryptoContext::WriteHandshake
-  MaybeStackBuffer<uint8_t, 200> data_buf_;
+  std::vector<uint8_t> data_buf_;
   uv_buf_t buf_;
   done_cb done_ = default_done;
   size_t offset_ = 0;

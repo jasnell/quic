@@ -17,7 +17,7 @@ inline bool IsEmptyBuffer(const uv_buf_t& buf) {
 }  // namespace
 
 void QuicBufferChunk::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("data_buf", data_buf_.length());
+  tracker->TrackField("data_buf", data_buf_.size());
   tracker->TrackField("next", next_);
 }
 
