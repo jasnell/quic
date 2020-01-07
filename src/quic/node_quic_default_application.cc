@@ -118,67 +118,53 @@ int IsEmpty(const ngtcp2_vec* vec, size_t cnt) {
 }
 }  // anonymous namespace
 
+int DefaultApplication::GetStreamData(StreamData* stream_data) {
+  QuicStream* stream = session()->FindStream(stream_data->id);
+  stream_data->remaining =
+    stream->DrainInto(&stream_data->data, &stream_data->count, 16);
+  stream_data->fin = stream->is_writable() ? 0 : 1;
+
+  Debug(session(), "Selected %" PRId64 " buffers for stream %" PRId64 "%s",
+        stream_data->count,
+        stream_data->id,
+        stream_data->fin == 1 ? " (fin)" : "");
+  return 0;
+}
+
 bool DefaultApplication::SendStreamData(QuicStream* stream) {
   ssize_t ndatalen = 0;
   QuicPathStorage path;
   Debug(session(), "Default QUIC Application sending stream %" PRId64 " data",
         stream->GetID());
 
-  std::vector<ngtcp2_vec> vec;
-
-  // remaining is the total number of bytes stored in the vector
-  // that are remaining to be serialized.
-  size_t remaining = stream->DrainInto(&vec);
-  Debug(stream, "Sending %d bytes of stream data. Still writable? %s",
-        remaining,
-        stream->is_writable() ? "yes" : "no");
-
-  // c and v are used to track the current serialization position
-  // for each iteration of the for(;;) loop below.
-  size_t c = vec.size();
-  ngtcp2_vec* v = vec.data();
+  StreamData stream_data;
+  stream_data.id = stream->GetID();
+  stream_data.user_data = stream;
+  GetStreamData(&stream_data);
 
   // If there is no stream data and we're not sending fin,
   // Just return without doing anything.
-  if (c == 0 && stream->is_writable()) {
+  if (stream_data.count == 0 && !stream_data.fin) {
     Debug(stream, "There is no stream data to send");
     return true;
   }
 
   std::unique_ptr<QuicPacket> packet = CreateStreamDataPacket();
-  size_t packet_offset = 0;
+  uint8_t* pos = packet->data();
 
   for (;;) {
-    Debug(stream, "Starting packet serialization. Remaining? %d", remaining);
-
     // If packet was sent on the previous iteration, it will have been reset
-    if (!packet)
+    if (!packet) {
       packet = CreateStreamDataPacket();
+      pos = packet->data();
+    }
 
-    ssize_t nwrite =
-        ngtcp2_conn_writev_stream(
-            session()->connection(),
-            &path.path,
-            packet->data() + packet_offset,
-            session()->max_packet_length(),
-            &ndatalen,
-            remaining > 0 ?
-                NGTCP2_WRITE_STREAM_FLAG_MORE :
-                NGTCP2_WRITE_STREAM_FLAG_NONE,
-            stream->GetID(),
-            stream->is_writable() ? 0 : 1,
-            reinterpret_cast<const ngtcp2_vec*>(v),
-            c,
-            uv_hrtime());
+    ssize_t nwrite = WriteVStream(&path, pos, &ndatalen, stream_data);
 
     if (nwrite <= 0) {
       switch (nwrite) {
         case 0:
-          // If zero is returned, we've hit congestion limits. We need to stop
-          // serializing data and try again later to empty the queue once the
-          // congestion window has expanded.
-          Debug(stream, "Congestion limit reached");
-          return true;
+          goto congestion_limited;
         case NGTCP2_ERR_PKT_NUM_EXHAUSTED:
           // There is a finite number of packets that can be sent
           // per connection. Once those are exhausted, there's
@@ -190,45 +176,30 @@ bool DefaultApplication::SendStreamData(QuicStream* stream) {
           session()->SilentClose();
           return false;
         case NGTCP2_ERR_STREAM_DATA_BLOCKED:
-          Debug(stream, "Stream data blocked");
           session()->StreamDataBlocked(stream->GetID());
+          if (session()->max_data_left() == 0)
+            goto congestion_limited;
           return true;
         case NGTCP2_ERR_STREAM_SHUT_WR:
-          Debug(stream, "Stream writable side is closed");
+          if (UNLIKELY(!BlockStream(stream_data.id)))
+            return false;
           return true;
         case NGTCP2_ERR_STREAM_NOT_FOUND:
-          Debug(stream, "Stream does not exist");
           return true;
         case NGTCP2_ERR_WRITE_STREAM_MORE:
-          if (ndatalen > 0) {
-            remaining -= ndatalen;
-            Debug(stream,
-                "%" PRIu64 " stream bytes serialized into packet. %d remaining",
-                ndatalen,
-                remaining);
-            Consume(&v, &c, ndatalen);
-            stream->Commit(ndatalen);
-            packet_offset += ndatalen;
-          }
+          CHECK_GT(ndatalen, 0);
+          CHECK(StreamCommit(&stream_data, ndatalen));
+          pos += ndatalen;
           continue;
-        default:
-          Debug(stream, "Error writing packet. Code %" PRIu64, nwrite);
-          session()->set_last_error(
-              QUIC_ERROR_SESSION,
-              static_cast<int>(nwrite));
-          return false;
       }
+      session()->set_last_error(QUIC_ERROR_SESSION, static_cast<int>(nwrite));
+      return false;
     }
 
-    if (ndatalen > 0) {
-      remaining -= ndatalen;
-      Debug(stream,
-            "%" PRIu64 " stream bytes serialized into packet. %d remaining",
-            ndatalen,
-            remaining);
-      Consume(&v, &c, ndatalen);
-      stream->Commit(ndatalen);
-    }
+    pos += nwrite;
+
+    if (ndatalen >= 0)
+      CHECK(StreamCommit(&stream_data, ndatalen));
 
     Debug(stream, "Sending %" PRIu64 " bytes in serialized packet", nwrite);
     packet->set_length(nwrite);
@@ -236,20 +207,44 @@ bool DefaultApplication::SendStreamData(QuicStream* stream) {
       return false;
 
     packet.reset();
-    packet_offset = 0;
+    pos = nullptr;
 
-    if (IsEmpty(v, c)) {
-      // fin will have been set if all of the data has been
-      // encoded in the packet and is_writable() returns false.
-      if (!stream->is_writable()) {
-        Debug(stream, "Final stream has been sent");
-        stream->set_fin_sent();
-      }
+    if (ShouldSetFin(&stream_data))
+      set_stream_fin(stream_data.id);
+
+    if (IsEmpty(stream_data.buf, stream_data.count))
       break;
-    }
   }
 
   return true;
+
+ congestion_limited:
+  if (pos - packet->data()) {
+    // Some data was serialized into the packet. We need to send it.
+    packet->set_length(pos - packet->data());
+    Debug(session(), "Congestion limited, but %" PRIu64 " bytes pending.",
+          packet->length());
+    if (!session()->SendPacket(std::move(packet), path))
+      return false;
+  }
+  return true;
+}
+
+bool DefaultApplication::StreamCommit(
+    StreamData* stream_data,
+    size_t datalen) {
+  QuicStream* stream = static_cast<QuicStream*>(stream_data->user_data);
+  stream_data->remaining -= datalen;
+  Consume(&stream_data->buf, &stream_data->count, datalen);
+  stream->Commit(datalen);
+  return true;
+}
+
+bool DefaultApplication::ShouldSetFin(StreamData* stream_data) {
+  if (!IsEmpty(stream_data->buf, stream_data->count))
+    return false;
+  QuicStream* stream = static_cast<QuicStream*>(stream_data->user_data);
+  return !stream->is_writable();
 }
 
 }  // namespace quic

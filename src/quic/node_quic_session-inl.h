@@ -138,6 +138,35 @@ bool QuicCryptoContext::SetupInitialKey(const ngtcp2_cid* dcid) {
 
 QuicApplication::QuicApplication(QuicSession* session) : session_(session) {}
 
+void QuicApplication::set_stream_fin(int64_t stream_id) {
+  QuicStream* stream = session()->FindStream(stream_id);
+  if (stream != nullptr)
+    stream->set_fin_sent();
+}
+
+ssize_t QuicApplication::WriteVStream(
+    QuicPathStorage* path,
+    uint8_t* buf,
+    ssize_t* ndatalen,
+    const StreamData& stream_data) {
+  CHECK_LE(stream_data.count, 16);
+  return ngtcp2_conn_writev_stream(
+    session()->connection(),
+    &path->path,
+    buf,
+    session()->max_packet_length(),
+    ndatalen,
+    stream_data.remaining > 0 ?
+        NGTCP2_WRITE_STREAM_FLAG_MORE :
+        NGTCP2_WRITE_STREAM_FLAG_NONE,
+    stream_data.id,
+    stream_data.fin,
+    stream_data.buf,
+    stream_data.count,
+    uv_hrtime()
+  );
+}
+
 std::unique_ptr<QuicPacket> QuicApplication::CreateStreamDataPacket() {
   return QuicPacket::Create(
       "stream data",

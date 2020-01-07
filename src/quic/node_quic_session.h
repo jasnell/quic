@@ -523,6 +523,7 @@ class QuicApplication : public MemoryRetainer {
   virtual bool SubmitTrailers(
       int64_t stream_id,
       v8::Local<v8::Array> headers) { return false; }
+  virtual bool BlockStream(int64_t id) { return true; }
 
   inline Environment* env() const;
 
@@ -533,9 +534,32 @@ class QuicApplication : public MemoryRetainer {
   QuicSession* session() const { return session_; }
   bool needs_init() const { return needs_init_; }
   void set_init_done() { needs_init_ = false; }
+  inline void set_stream_fin(int64_t stream_id);
   void set_max_header_pairs(size_t max) { max_header_pairs_ = max; }
   void set_max_header_length(size_t max) { max_header_length_ = max; }
   inline std::unique_ptr<QuicPacket> CreateStreamDataPacket();
+
+  struct StreamData {
+    size_t count = 0;
+    size_t remaining = 0;
+    int64_t id = -1;
+    int fin = 0;
+    ngtcp2_vec data[16] {};
+    ngtcp2_vec* buf = nullptr;
+    void* user_data = nullptr;
+    uint8_t* pos = nullptr;
+    StreamData() { buf = data; }
+  };
+
+  virtual int GetStreamData(StreamData* data) = 0;
+  virtual bool StreamCommit(StreamData* data, size_t datalen) = 0;
+  virtual bool ShouldSetFin(StreamData* data) = 0;
+
+  inline ssize_t WriteVStream(
+      QuicPathStorage* path,
+      uint8_t* buf,
+      ssize_t* ndatalen,
+      const StreamData& stream_data);
 
  private:
   QuicSession* session_;

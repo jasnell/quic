@@ -437,11 +437,11 @@ void Http3Application::ExtendMaxStreamData(
   nghttp3_conn_unblock_stream(connection(), stream_id);
 }
 
-bool Http3Application::StreamCommit(int64_t stream_id, ssize_t datalen) {
-  CHECK_GT(datalen, 0);
+bool Http3Application::StreamCommit(StreamData* stream_data, size_t datalen) {
+  CHECK_GE(datalen, 0);
   int err = nghttp3_conn_add_write_offset(
       connection(),
-      stream_id,
+      stream_data->id,
       datalen);
   if (err != 0) {
     session()->set_last_error(QUIC_ERROR_APPLICATION, err);
@@ -450,98 +450,109 @@ bool Http3Application::StreamCommit(int64_t stream_id, ssize_t datalen) {
   return true;
 }
 
-void Http3Application::set_stream_fin(int64_t stream_id) {
-  if (!is_control_stream(stream_id)) {
-    QuicStream* stream = session()->FindStream(stream_id);
-    if (stream != nullptr)
-      stream->set_fin_sent();
+int Http3Application::GetStreamData(StreamData* stream_data) {
+  ssize_t ret = 0;
+  if (connection() && session()->max_data_left()) {
+    ret = nghttp3_conn_writev_stream(
+        connection(),
+        &stream_data->id,
+        &stream_data->fin,
+        reinterpret_cast<nghttp3_vec*>(stream_data->data),
+        sizeof(stream_data->data));
+    if (ret < 0)
+      return static_cast<int>(ret);
+    else
+      stream_data->remaining = stream_data->count = static_cast<size_t>(ret);
   }
+  if (stream_data->id > -1) {
+    Debug(session(), "Selected %" PRId64 " buffers for stream %" PRId64 "%s",
+          stream_data->count,
+          stream_data->id,
+          stream_data->fin == 1 ? " (fin)" : "");
+  }
+  return 0;
+}
+
+bool Http3Application::BlockStream(int64_t stream_id) {
+  int err = nghttp3_conn_block_stream(connection(), stream_id);
+  if (err != 0) {
+    session()->set_last_error(QUIC_ERROR_APPLICATION, err);
+    return false;
+  }
+  return true;
 }
 
 bool Http3Application::SendPendingData() {
-  std::array<nghttp3_vec, 16> vec;
   QuicPathStorage path;
   int err;
 
   std::unique_ptr<QuicPacket> packet = CreateStreamDataPacket();
-  size_t packet_offset = 0;
+  uint8_t* pos = packet->data();
 
   for (;;) {
-    int64_t stream_id = -1;
-    int fin = 0;
-    ssize_t sveccnt = 0;
-
-    // First, grab the outgoing data from nghttp3
-    if (connection() && session()->max_data_left()) {
-      sveccnt =
-          nghttp3_conn_writev_stream(
-              connection(),
-              &stream_id,
-              &fin,
-              vec.data(),
-              vec.size());
-
-      if (sveccnt < 0)
-        return false;
-    }
-
-    Debug(session(), "Serializing packets for stream id %" PRId64, stream_id);
-
     ssize_t ndatalen;
-    nghttp3_vec* v = vec.data();
-    size_t vcnt = static_cast<size_t>(sveccnt);
-
-    // If packet was sent on previous iteration, it will have been reset.
-    if (!packet)
-      packet = CreateStreamDataPacket();
-
-    // Second, serialize as much of the outgoing data as possible to a
-    // QUIC packet for transmission. We'll keep iterating until there
-    // is no more data to transmit.
-    ssize_t nwrite =
-        ngtcp2_conn_writev_stream(
-            session()->connection(),
-            &path.path,
-            packet->data() + packet_offset,
-            session()->max_packet_length(),
-            &ndatalen,
-            NGTCP2_WRITE_STREAM_FLAG_MORE,
-            stream_id,
-            fin,
-            reinterpret_cast<const ngtcp2_vec *>(v),
-            vcnt,
-            uv_hrtime());
-
-    if (nwrite < 0) {
-      switch (nwrite) {
-        case NGTCP2_ERR_STREAM_DATA_BLOCKED:
-          session()->StreamDataBlocked(stream_id);
-          if (session()->max_data_left() == 0)
-            return true;
-          // Fall through
-        case NGTCP2_ERR_STREAM_SHUT_WR:
-          err = nghttp3_conn_block_stream(connection(), stream_id);
-          if (err != 0) {
-            session()->set_last_error(QUIC_ERROR_APPLICATION, err);
-            return false;
-          }
-          continue;
-        case NGTCP2_ERR_WRITE_STREAM_MORE:
-          if (ndatalen > 0) {
-            CHECK(StreamCommit(stream_id, ndatalen));
-            packet_offset += ndatalen;
-          }
-          continue;
-      }
-      //  session()->set_last_error(QUIC_ERROR_APPLICATION, nwrite);
+    StreamData stream_data;
+    err = GetStreamData(&stream_data);
+    if (err < 0) {
+      session()->set_last_error(QUIC_ERROR_APPLICATION, err);
       return false;
     }
 
-    if (nwrite == 0)
-      return true;  // Congestion limited
+    // If stream_data.id is -1, then we're not serializing any data for any
+    // specific stream. We still need to process QUIC session packets tho.
+    if (stream_data.id > -1)
+      Debug(session(), "Serializing packets for stream id %" PRId64,
+            stream_data.id);
+    else
+      Debug(session(), "Serializing session packets");
 
-    if (ndatalen > 0)
-      CHECK(StreamCommit(stream_id, ndatalen));
+    // If the packet was sent previously, then packet will have been reset.
+    if (!packet) {
+      packet = CreateStreamDataPacket();
+      pos = packet->data();
+    }
+
+    ssize_t nwrite = WriteVStream(&path, pos, &ndatalen, stream_data);
+
+    if (nwrite <= 0) {
+      switch (nwrite) {
+        case 0:
+          goto congestion_limited;
+        case NGTCP2_ERR_PKT_NUM_EXHAUSTED:
+          // There is a finite number of packets that can be sent
+          // per connection. Once those are exhausted, there's
+          // absolutely nothing we can do except immediately
+          // and silently tear down the QuicSession. This has
+          // to be silent because we can't even send a
+          // CONNECTION_CLOSE since even those require a
+          // packet number.
+          session()->SilentClose();
+          return false;
+        case NGTCP2_ERR_STREAM_DATA_BLOCKED:
+          session()->StreamDataBlocked(stream_data.id);
+          if (session()->max_data_left() == 0)
+            goto congestion_limited;
+          // Fall through
+        case NGTCP2_ERR_STREAM_SHUT_WR:
+          if (UNLIKELY(!BlockStream(stream_data.id)))
+            return false;
+          continue;
+        case NGTCP2_ERR_STREAM_NOT_FOUND:
+          continue;
+        case NGTCP2_ERR_WRITE_STREAM_MORE:
+          CHECK_GT(ndatalen, 0);
+          CHECK(StreamCommit(&stream_data, ndatalen));
+          pos += ndatalen;
+          continue;
+      }
+      session()->set_last_error(QUIC_ERROR_SESSION, static_cast<int>(nwrite));
+      return false;
+    }
+
+    pos += nwrite;
+
+    if (ndatalen >= 0)
+      CHECK(StreamCommit(&stream_data, ndatalen));
 
     Debug(session(), "Sending %" PRIu64 " bytes in serialized packet", nwrite);
     packet->set_length(nwrite);
@@ -549,12 +560,28 @@ bool Http3Application::SendPendingData() {
       return false;
 
     packet.reset();
-    packet_offset = 0;
+    pos = nullptr;
 
-    if (fin)
-      set_stream_fin(stream_id);
+    if (ShouldSetFin(&stream_data))
+      set_stream_fin(stream_data.id);
   }
   return true;
+
+ congestion_limited:
+  // We are either congestion limited or done.
+  if (pos - packet->data()) {
+    // Some data was serialized into the packet. We need to send it.
+    packet->set_length(pos - packet->data());
+    Debug(session(), "Congestion limited, but %" PRIu64 " bytes pending.",
+          packet->length());
+    if (!session()->SendPacket(std::move(packet), path))
+      return false;
+  }
+  return true;
+}
+
+bool Http3Application::ShouldSetFin(StreamData* stream_data) {
+  return !is_control_stream(stream_data->id) && stream_data->fin == 1;
 }
 
 bool Http3Application::SendStreamData(QuicStream* stream) {

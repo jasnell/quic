@@ -36,6 +36,10 @@ class DefaultApplication final : public QuicApplication {
   bool SendPendingData() override;
   bool SendStreamData(QuicStream* stream) override;
 
+  int GetStreamData(StreamData* stream_data) override;
+  bool StreamCommit(StreamData* stream_data, size_t datalen) override;
+  bool ShouldSetFin(StreamData* stream_data) override;
+
   SET_SELF_SIZE(DefaultApplication)
   SET_MEMORY_INFO_NAME(DefaultApplication)
   SET_NO_MEMORY_INFO()
