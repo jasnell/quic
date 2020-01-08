@@ -135,10 +135,10 @@ bool DefaultApplication::SendStreamData(QuicStream* stream) {
   ssize_t ndatalen = 0;
   QuicPathStorage path;
   Debug(session(), "Default QUIC Application sending stream %" PRId64 " data",
-        stream->GetID());
+        stream->id());
 
   StreamData stream_data;
-  stream_data.id = stream->GetID();
+  stream_data.id = stream->id();
   stream_data.user_data = stream;
   GetStreamData(&stream_data);
 
@@ -176,7 +176,7 @@ bool DefaultApplication::SendStreamData(QuicStream* stream) {
           session()->SilentClose();
           return false;
         case NGTCP2_ERR_STREAM_DATA_BLOCKED:
-          session()->StreamDataBlocked(stream->GetID());
+          session()->StreamDataBlocked(stream->id());
           if (session()->max_data_left() == 0)
             goto congestion_limited;
           return true;

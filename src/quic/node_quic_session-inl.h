@@ -221,10 +221,10 @@ void QuicSession::ExtendMaxStreamsBidi(uint64_t max_streams) {
 // Extends the stream-level flow control by the given number of bytes.
 void QuicSession::ExtendStreamOffset(QuicStream* stream, size_t amount) {
   Debug(this, "Extending max stream %" PRId64 " offset by %" PRId64 " bytes",
-        stream->GetID(), amount);
+        stream->id(), amount);
   ngtcp2_conn_extend_max_stream_offset(
       connection(),
-      stream->GetID(),
+      stream->id(),
       amount);
 }
 

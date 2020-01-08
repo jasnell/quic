@@ -209,7 +209,7 @@ class QuicStream : public AsyncWrap, public StreamBase {
         QUIC_STREAM_CLIENT;
   }
 
-  int64_t GetID() const { return stream_id_; }
+  int64_t id() const { return stream_id_; }
 
   inline bool is_destroyed() const {
     return flags_ & QUICSTREAM_FLAG_DESTROYED;

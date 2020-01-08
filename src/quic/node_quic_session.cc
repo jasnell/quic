@@ -466,7 +466,7 @@ void JSQuicSessionListener::OnStreamReady(BaseObjectPtr<QuicStream> stream) {
   Environment* env = session()->env();
   Local<Value> argv[] = {
     stream->object(),
-    Number::New(env->isolate(), static_cast<double>(stream->GetID()))
+    Number::New(env->isolate(), static_cast<double>(stream->id()))
   };
 
   // Grab a shared pointer to this to prevent the QuicSession
@@ -1423,8 +1423,8 @@ void QuicSession::AddToSocket(QuicSocket* socket) {
 // streams added must be removed before the QuicSession instance is freed.
 void QuicSession::AddStream(BaseObjectPtr<QuicStream> stream) {
   DCHECK(!is_flag_set(QUICSESSION_FLAG_GRACEFUL_CLOSING));
-  Debug(this, "Adding stream %" PRId64 " to session.", stream->GetID());
-  streams_.emplace(stream->GetID(), stream);
+  Debug(this, "Adding stream %" PRId64 " to session.", stream->id());
+  streams_.emplace(stream->id(), stream);
 
   // Update tracking statistics for the number of streams associated with
   // this session.

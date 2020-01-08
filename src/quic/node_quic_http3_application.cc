@@ -594,7 +594,7 @@ bool Http3Application::ShouldSetFin(const StreamData& stream_data) {
 
 bool Http3Application::SendStreamData(QuicStream* stream) {
   // Data is available now, so resume the stream.
-  nghttp3_conn_resume_stream(connection(), stream->GetID());
+  nghttp3_conn_resume_stream(connection(), stream->id());
   return SendPendingData();
 }
 

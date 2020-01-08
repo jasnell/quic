@@ -94,7 +94,7 @@ QuicStream::QuicStream(
 }
 
 std::string QuicStream::diagnostic_name() const {
-  return std::string("QuicStream ") + std::to_string(GetID()) +
+  return std::string("QuicStream ") + std::to_string(stream_id_) +
          " (" + std::to_string(static_cast<int64_t>(get_async_id())) +
          ", " + session_->diagnostic_name() + ")";
 }
@@ -374,7 +374,7 @@ void QuicStream::ResetStream(uint64_t app_error_code) {
   // abandoned.
   set_read_close();
   set_write_close();
-  session_->ResetStream(GetID(), app_error_code);
+  session_->ResetStream(stream_id_, app_error_code);
 }
 
 BaseObjectPtr<QuicStream> QuicStream::New(
@@ -425,7 +425,7 @@ void QuicStream::EndHeaders() {
   // Upon completion of a block of headers, convert the
   // vector of Header objects into an array of name+value
   // pairs, then call the on_stream_headers function.
-  session()->application()->StreamHeaders(GetID(), headers_kind_, headers_);
+  session()->application()->StreamHeaders(stream_id_, headers_kind_, headers_);
   headers_.clear();
 }
 
@@ -438,15 +438,15 @@ void QuicStream::MemoryInfo(MemoryTracker* tracker) const {
 }
 
 bool QuicStream::SubmitInformation(v8::Local<v8::Array> headers) {
-  return session_->SubmitInformation(GetID(), headers);
+  return session_->SubmitInformation(stream_id_, headers);
 }
 
 bool QuicStream::SubmitHeaders(v8::Local<v8::Array> headers, uint32_t flags) {
-  return session_->SubmitHeaders(GetID(), headers, flags);
+  return session_->SubmitHeaders(stream_id_, headers, flags);
 }
 
 bool QuicStream::SubmitTrailers(v8::Local<v8::Array> headers) {
-  return session_->SubmitTrailers(GetID(), headers);
+  return session_->SubmitTrailers(stream_id_, headers);
 }
 
 // JavaScript API
@@ -454,7 +454,7 @@ namespace {
 void QuicStreamGetID(const FunctionCallbackInfo<Value>& args) {
   QuicStream* stream;
   ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
-  args.GetReturnValue().Set(static_cast<double>(stream->GetID()));
+  args.GetReturnValue().Set(static_cast<double>(stream->id()));
 }
 
 void OpenUnidirectionalStream(const FunctionCallbackInfo<Value>& args) {
