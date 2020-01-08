@@ -209,7 +209,7 @@ bool DefaultApplication::SendStreamData(QuicStream* stream) {
     packet.reset();
     pos = nullptr;
 
-    if (ShouldSetFin(&stream_data))
+    if (ShouldSetFin(stream_data))
       set_stream_fin(stream_data.id);
 
     if (IsEmpty(stream_data.buf, stream_data.count))
@@ -240,10 +240,10 @@ bool DefaultApplication::StreamCommit(
   return true;
 }
 
-bool DefaultApplication::ShouldSetFin(StreamData* stream_data) {
-  if (!IsEmpty(stream_data->buf, stream_data->count))
+bool DefaultApplication::ShouldSetFin(const StreamData& stream_data) {
+  if (!IsEmpty(stream_data.buf, stream_data.count))
     return false;
-  QuicStream* stream = static_cast<QuicStream*>(stream_data->user_data);
+  QuicStream* stream = static_cast<QuicStream*>(stream_data.user_data);
   return !stream->is_writable();
 }
 

@@ -483,8 +483,11 @@ bool Http3Application::BlockStream(int64_t stream_id) {
 }
 
 bool Http3Application::SendPendingData() {
+  // The maximum number of packets to send per call
+  static constexpr size_t MAX_PACKETS = 16;
   QuicPathStorage path;
   int err;
+  size_t packets_sent = 0;
 
   std::unique_ptr<QuicPacket> packet = CreateStreamDataPacket();
   uint8_t* pos = packet->data();
@@ -562,8 +565,11 @@ bool Http3Application::SendPendingData() {
     packet.reset();
     pos = nullptr;
 
-    if (ShouldSetFin(&stream_data))
+    if (ShouldSetFin(stream_data))
       set_stream_fin(stream_data.id);
+
+    if (++packets_sent == MAX_PACKETS)
+      break;
   }
   return true;
 
@@ -580,8 +586,10 @@ bool Http3Application::SendPendingData() {
   return true;
 }
 
-bool Http3Application::ShouldSetFin(StreamData* stream_data) {
-  return !is_control_stream(stream_data->id) && stream_data->fin == 1;
+bool Http3Application::ShouldSetFin(const StreamData& stream_data) {
+  return stream_data.id > -1 &&
+         !is_control_stream(stream_data.id) &&
+         stream_data.fin == 1;
 }
 
 bool Http3Application::SendStreamData(QuicStream* stream) {

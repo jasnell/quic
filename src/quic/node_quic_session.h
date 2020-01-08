@@ -555,7 +555,7 @@ class QuicApplication : public MemoryRetainer {
 
   virtual int GetStreamData(StreamData* data) = 0;
   virtual bool StreamCommit(StreamData* data, size_t datalen) = 0;
-  virtual bool ShouldSetFin(StreamData* data) = 0;
+  virtual bool ShouldSetFin(const StreamData& data) = 0;
 
   inline ssize_t WriteVStream(
       QuicPathStorage* path,

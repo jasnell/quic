@@ -38,7 +38,7 @@ class DefaultApplication final : public QuicApplication {
 
   int GetStreamData(StreamData* stream_data) override;
   bool StreamCommit(StreamData* stream_data, size_t datalen) override;
-  bool ShouldSetFin(StreamData* stream_data) override;
+  bool ShouldSetFin(const StreamData& stream_data) override;
 
   SET_SELF_SIZE(DefaultApplication)
   SET_MEMORY_INFO_NAME(DefaultApplication)
