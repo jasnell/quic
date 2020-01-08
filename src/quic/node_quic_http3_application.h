@@ -7,7 +7,7 @@
 #include "node_http_common.h"
 #include "node_mem.h"
 #include "node_quic_session.h"
-#include "node_quic_stream.h"
+#include "node_quic_stream-inl.h"
 #include "node_quic_util.h"
 #include "v8.h"
 #include <ngtcp2/ngtcp2.h>
@@ -67,6 +67,10 @@ class Http3Header : public QuicHeader {
 
   size_t length() const override;
 
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(Http3Header)
+  SET_SELF_SIZE(Http3Header)
+
  private:
   int32_t token_ = -1;
   Http3RcBufferPointer name_;
@@ -103,6 +107,8 @@ class Http3Application final :
       int64_t stream_id,
       uint64_t final_size,
       uint64_t app_error_code) override;
+
+  void ResumeStream(int64_t stream_id) override;
 
   void ExtendMaxStreamsRemoteUni(uint64_t max_streams) override;
   void ExtendMaxStreamData(int64_t stream_id, uint64_t max_data) override;

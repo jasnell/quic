@@ -15,7 +15,7 @@
 #include "node_quic_buffer-inl.h"
 #include "node_quic_crypto.h"
 #include "node_quic_socket.h"
-#include "node_quic_stream.h"
+#include "node_quic_stream-inl.h"
 #include "node_quic_state.h"
 #include "node_quic_util-inl.h"
 #include "node_quic_default_application.h"
@@ -1429,13 +1429,13 @@ void QuicSession::AddStream(BaseObjectPtr<QuicStream> stream) {
   // Update tracking statistics for the number of streams associated with
   // this session.
   switch (stream->origin()) {
-    case QuicStream::QuicStreamOrigin::QUIC_STREAM_CLIENT:
+    case QuicStreamOrigin::QUIC_STREAM_CLIENT:
       if (is_server())
         IncrementStat(1, &session_stats_, &session_stats::streams_in_count);
       else
         IncrementStat(1, &session_stats_, &session_stats::streams_out_count);
       break;
-    case QuicStream::QuicStreamOrigin::QUIC_STREAM_SERVER:
+    case QuicStreamOrigin::QUIC_STREAM_SERVER:
       if (is_server())
         IncrementStat(1, &session_stats_, &session_stats::streams_out_count);
       else
@@ -1443,10 +1443,10 @@ void QuicSession::AddStream(BaseObjectPtr<QuicStream> stream) {
   }
   IncrementStat(1, &session_stats_, &session_stats::streams_out_count);
   switch (stream->direction()) {
-    case QuicStream::QuicStreamDirection::QUIC_STREAM_BIRECTIONAL:
+    case QuicStreamDirection::QUIC_STREAM_BIRECTIONAL:
       IncrementStat(1, &session_stats_, &session_stats::bidi_stream_count);
       break;
-    case QuicStream::QuicStreamDirection::QUIC_STREAM_UNIDIRECTIONAL:
+    case QuicStreamDirection::QUIC_STREAM_UNIDIRECTIONAL:
       IncrementStat(1, &session_stats_, &session_stats::uni_stream_count);
       break;
   }
@@ -2178,6 +2178,8 @@ bool QuicSession::set_socket(QuicSocket* socket, bool nat_rebinding) {
   if (socket == nullptr || socket == socket_.get())
     return true;
 
+  SendSessionScope send(this);
+
   // Step 1: Add this Session to the given Socket
   AddToSocket(socket);
 
@@ -2204,25 +2206,16 @@ bool QuicSession::set_socket(QuicSocket* socket, bool nat_rebinding) {
     }
   }
 
-  SendPendingData();
   return true;
 }
 
-void QuicSession::ResetStream(int64_t stream_id, uint64_t code) {
-  // First, update the internal ngtcp2 state of the given stream
-  // and schedule the STOP_SENDING and RESET_STREAM frames as
-  // appropriate.
-  CHECK_EQ(
-      ngtcp2_conn_shutdown_stream(
-          connection(),
-          stream_id,
-          code), 0);
+void QuicSession::ResumeStream(int64_t stream_id) {
+  application()->ResumeStream(stream_id);
+}
 
-  // If ShutdownStream is called outside of an ngtcp2 callback,
-  // we need to trigger SendPendingData manually to cause the
-  // RESET_STREAM and STOP_SENDING frames to be transmitted.
-  if (!Ngtcp2CallbackScope::InNgtcp2CallbackScope(this))
-    SendPendingData();
+void QuicSession::ResetStream(int64_t stream_id, uint64_t code) {
+  SendSessionScope scope(this);
+  CHECK_EQ(ngtcp2_conn_shutdown_stream(connection(), stream_id, code), 0);
 }
 
 // Silent Close must start with the JavaScript side, which must

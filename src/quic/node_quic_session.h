@@ -511,6 +511,7 @@ class QuicApplication : public MemoryRetainer {
       int64_t stream_id,
       uint64_t app_error_code);
   virtual void StreamOpen(int64_t stream_id) {}
+  virtual void ResumeStream(int64_t stream_id) {}
   virtual void StreamReset(
       int64_t stream_id,
       uint64_t final_size,
@@ -906,6 +907,8 @@ class QuicSession : public AsyncWrap,
       int64_t stream_id,
       uint64_t error_code = NGTCP2_APP_NOERROR);
 
+  void ResumeStream(int64_t stream_id);
+
   // Submits informational headers to the QUIC Application
   // implementation. If headers are not supported, false
   // will be returned. Otherwise, returns true
@@ -989,6 +992,19 @@ class QuicSession : public AsyncWrap,
 
   // Report that the stream data is flow control blocked
   inline void StreamDataBlocked(int64_t stream_id);
+
+  class SendSessionScope {
+   public:
+    explicit SendSessionScope(QuicSession* session) : session_(session) {}
+
+    ~SendSessionScope() {
+      if (!Ngtcp2CallbackScope::InNgtcp2CallbackScope(session_))
+        session_->SendPendingData();
+    }
+
+   private:
+    QuicSession* session_;
+  };
 
   // Tracks whether or not we are currently within an ngtcp2 callback
   // function. Certain ngtcp2 APIs are not supposed to be called when

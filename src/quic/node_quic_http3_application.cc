@@ -5,7 +5,7 @@
 #include "node_quic_http3_application.h"
 #include "node_quic_session-inl.h"
 #include "node_quic_socket.h"
-#include "node_quic_stream.h"
+#include "node_quic_stream-inl.h"
 #include "node_quic_util-inl.h"
 #include "node_sockaddr-inl.h"
 #include "node_http_common-inl.h"
@@ -131,6 +131,11 @@ std::string Http3Header::value() const {
 
 size_t Http3Header::length() const {
   return name().length() + value().length();
+}
+
+void Http3Header::MemoryInfo(MemoryTracker* tracker) const {
+  tracker->TrackField("name", name_);
+  tracker->TrackField("value", value_);
 }
 
 namespace {
@@ -427,6 +432,10 @@ void Http3Application::StreamReset(
   QuicApplication::StreamReset(stream_id, final_size, app_error_code);
 }
 
+void Http3Application::ResumeStream(int64_t stream_id) {
+  nghttp3_conn_resume_stream(connection(), stream_id);
+}
+
 void Http3Application::ExtendMaxStreamsRemoteUni(uint64_t max_streams) {
   nghttp3_conn_set_max_client_streams_bidi(connection(), max_streams);
 }
@@ -640,7 +649,7 @@ void Http3Application::H3AckedStreamData(
     size_t datalen) {
   QuicStream* stream = session()->FindStream(stream_id);
   if (stream) {
-    stream->AckedDataOffset(0, datalen);
+    stream->Acknowledge(0, datalen);
     nghttp3_conn_resume_stream(connection(), stream_id);
   }
 }

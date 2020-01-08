@@ -3,7 +3,7 @@
 #include "node_quic_default_application.h"
 #include "node_quic_session-inl.h"
 #include "node_quic_socket.h"
-#include "node_quic_stream.h"
+#include "node_quic_stream-inl.h"
 #include "node_quic_util-inl.h"
 #include "node_sockaddr-inl.h"
 #include <ngtcp2/ngtcp2.h>
@@ -68,7 +68,7 @@ void DefaultApplication::AcknowledgeStreamData(
   // It's possible that the stream has already been destroyed and
   // removed. If so, just silently ignore the ack
   if (stream != nullptr)
-    stream->AckedDataOffset(offset, datalen);
+    stream->Acknowledge(offset, datalen);
 }
 
 bool DefaultApplication::SendPendingData() {

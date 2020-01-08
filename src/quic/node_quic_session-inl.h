@@ -9,7 +9,7 @@
 #include "node_quic_crypto.h"
 #include "node_quic_session.h"
 #include "node_quic_socket.h"
-#include "node_quic_stream.h"
+#include "node_quic_stream-inl.h"
 
 #include <openssl/ssl.h>
 #include <memory>
