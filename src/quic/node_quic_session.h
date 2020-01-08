@@ -22,7 +22,7 @@
 #include <ngtcp2/ngtcp2_crypto.h>
 #include <openssl/ssl.h>
 
-#include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace node {
@@ -34,6 +34,8 @@ class QuicSocket;
 class QuicPacket;
 class QuicStream;
 class QuicHeader;
+
+using StreamsMap = std::unordered_map<int64_t, BaseObjectPtr<QuicStream>>;
 
 enum class QlogMode {
   kDisabled,
@@ -871,9 +873,7 @@ class QuicSession : public AsyncWrap,
   int set_session(SSL_SESSION* session);
   bool set_session(v8::Local<v8::Value> buffer);
 
-  const std::map<int64_t, BaseObjectPtr<QuicStream>>& streams() const {
-    return streams_;
-  }
+  const StreamsMap& streams() const { return streams_; }
 
   // ResetStream will cause ngtcp2 to queue a
   // RESET_STREAM and STOP_SENDING frame, as appropriate,
@@ -1364,7 +1364,7 @@ class QuicSession : public AsyncWrap,
 
   std::unique_ptr<QuicPacket> conn_closebuf_;
 
-  std::map<int64_t, BaseObjectPtr<QuicStream>> streams_;
+  StreamsMap streams_;
 
   AliasedFloat64Array state_;
 
