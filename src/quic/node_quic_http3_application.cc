@@ -491,120 +491,10 @@ bool Http3Application::BlockStream(int64_t stream_id) {
   return true;
 }
 
-bool Http3Application::SendPendingData() {
-  // The maximum number of packets to send per call
-  static constexpr size_t MAX_PACKETS = 16;
-  QuicPathStorage path;
-  int err;
-  size_t packets_sent = 0;
-
-  std::unique_ptr<QuicPacket> packet = CreateStreamDataPacket();
-  uint8_t* pos = packet->data();
-
-  for (;;) {
-    ssize_t ndatalen;
-    StreamData stream_data;
-    err = GetStreamData(&stream_data);
-    if (err < 0) {
-      session()->set_last_error(QUIC_ERROR_APPLICATION, err);
-      return false;
-    }
-
-    // If stream_data.id is -1, then we're not serializing any data for any
-    // specific stream. We still need to process QUIC session packets tho.
-    if (stream_data.id > -1)
-      Debug(session(), "Serializing packets for stream id %" PRId64,
-            stream_data.id);
-    else
-      Debug(session(), "Serializing session packets");
-
-    // If the packet was sent previously, then packet will have been reset.
-    if (!packet) {
-      packet = CreateStreamDataPacket();
-      pos = packet->data();
-    }
-
-    ssize_t nwrite = WriteVStream(&path, pos, &ndatalen, stream_data);
-
-    if (nwrite <= 0) {
-      switch (nwrite) {
-        case 0:
-          goto congestion_limited;
-        case NGTCP2_ERR_PKT_NUM_EXHAUSTED:
-          // There is a finite number of packets that can be sent
-          // per connection. Once those are exhausted, there's
-          // absolutely nothing we can do except immediately
-          // and silently tear down the QuicSession. This has
-          // to be silent because we can't even send a
-          // CONNECTION_CLOSE since even those require a
-          // packet number.
-          session()->SilentClose();
-          return false;
-        case NGTCP2_ERR_STREAM_DATA_BLOCKED:
-          session()->StreamDataBlocked(stream_data.id);
-          if (session()->max_data_left() == 0)
-            goto congestion_limited;
-          // Fall through
-        case NGTCP2_ERR_STREAM_SHUT_WR:
-          if (UNLIKELY(!BlockStream(stream_data.id)))
-            return false;
-          continue;
-        case NGTCP2_ERR_STREAM_NOT_FOUND:
-          continue;
-        case NGTCP2_ERR_WRITE_STREAM_MORE:
-          CHECK_GT(ndatalen, 0);
-          CHECK(StreamCommit(&stream_data, ndatalen));
-          pos += ndatalen;
-          continue;
-      }
-      session()->set_last_error(QUIC_ERROR_SESSION, static_cast<int>(nwrite));
-      return false;
-    }
-
-    pos += nwrite;
-
-    if (ndatalen >= 0)
-      CHECK(StreamCommit(&stream_data, ndatalen));
-
-    Debug(session(), "Sending %" PRIu64 " bytes in serialized packet", nwrite);
-    packet->set_length(nwrite);
-    if (!session()->SendPacket(std::move(packet), path))
-      return false;
-
-    packet.reset();
-    pos = nullptr;
-
-    if (ShouldSetFin(stream_data))
-      set_stream_fin(stream_data.id);
-
-    if (++packets_sent == MAX_PACKETS)
-      break;
-  }
-  return true;
-
- congestion_limited:
-  // We are either congestion limited or done.
-  if (pos - packet->data()) {
-    // Some data was serialized into the packet. We need to send it.
-    packet->set_length(pos - packet->data());
-    Debug(session(), "Congestion limited, but %" PRIu64 " bytes pending.",
-          packet->length());
-    if (!session()->SendPacket(std::move(packet), path))
-      return false;
-  }
-  return true;
-}
-
 bool Http3Application::ShouldSetFin(const StreamData& stream_data) {
   return stream_data.id > -1 &&
          !is_control_stream(stream_data.id) &&
          stream_data.fin == 1;
-}
-
-bool Http3Application::SendStreamData(QuicStream* stream) {
-  // Data is available now, so resume the stream.
-  nghttp3_conn_resume_stream(connection(), stream->id());
-  return SendPendingData();
 }
 
 // This is where nghttp3 pulls the data from the outgoing
@@ -647,11 +537,7 @@ ssize_t Http3Application::ReadData(
 void Http3Application::AckedStreamData(
     int64_t stream_id,
     size_t datalen) {
-  QuicStream* stream = session()->FindStream(stream_id);
-  if (stream != nullptr) {
-    stream->Acknowledge(0, datalen);
-    ResumeStream(stream_id);
-  }
+  Acknowledge(stream_id, 0, datalen);
 }
 
 void Http3Application::StreamClosed(

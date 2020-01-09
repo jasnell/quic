@@ -220,6 +220,16 @@ size_t QuicStream::DrainInto(
   return length;
 }
 
+void QuicStream::Schedule(Queue* queue) {
+  if (!stream_queue_.IsEmpty())  // Already scheduled?
+    return;
+  queue->PushBack(this);
+}
+
+void QuicStream::Unschedule() {
+  stream_queue_.Remove();
+}
+
 }  // namespace quic
 }  // namespace node
 

@@ -126,9 +126,6 @@ class Http3Application final :
       int64_t stream_id,
       v8::Local<v8::Array> headers) override;
 
-  bool SendPendingData() override;
-  bool SendStreamData(QuicStream* stream) override;
-
   // Implementation for mem::NgLibMemoryManager
   void CheckAllocatedSize(size_t previous_size) const;
   void IncreaseAllocatedSize(size_t size);

@@ -9,6 +9,7 @@
 #include "histogram-inl.h"
 #include "node_quic_util.h"
 #include "stream_base-inl.h"
+#include "util-inl.h"
 #include "v8.h"
 
 #include <string>
@@ -18,6 +19,7 @@ namespace node {
 namespace quic {
 
 class QuicSession;
+class QuicApplication;
 
 enum QuicStreamHeaderFlags : uint32_t {
   // No flags
@@ -420,6 +422,14 @@ class QuicStream : public AsyncWrap, public StreamBase {
   BaseObjectPtr<HistogramBase> data_rx_ack_;
 
   AliasedBigUint64Array stats_buffer_;
+
+  ListNode<QuicStream> stream_queue_;
+
+ public:
+  // Linked List of QuicStream objects
+  using Queue = ListHead<QuicStream, &QuicStream::stream_queue_>;
+  inline void Schedule(Queue* queue);
+  inline void Unschedule();
 };
 
 }  // namespace quic

@@ -497,12 +497,12 @@ class QuicApplication : public MemoryRetainer {
   virtual void AcknowledgeStreamData(
       int64_t stream_id,
       uint64_t offset,
-      size_t datalen) = 0;
+      size_t datalen) { Acknowledge(stream_id, offset, datalen); }
+  virtual bool BlockStream(int64_t id) { return true; }
   virtual void ExtendMaxStreamsRemoteUni(uint64_t max_streams) {}
   virtual void ExtendMaxStreamsRemoteBidi(uint64_t max_streams) {}
   virtual void ExtendMaxStreamData(int64_t stream_id, uint64_t max_data) {}
-  virtual bool SendPendingData() = 0;
-  virtual bool SendStreamData(QuicStream* stream) = 0;
+  virtual void ResumeStream(int64_t stream_id) {}
   virtual void StreamHeaders(
       int64_t stream_id,
       int kind,
@@ -511,7 +511,6 @@ class QuicApplication : public MemoryRetainer {
       int64_t stream_id,
       uint64_t app_error_code);
   virtual void StreamOpen(int64_t stream_id) {}
-  virtual void ResumeStream(int64_t stream_id) {}
   virtual void StreamReset(
       int64_t stream_id,
       uint64_t final_size,
@@ -526,10 +525,10 @@ class QuicApplication : public MemoryRetainer {
   virtual bool SubmitTrailers(
       int64_t stream_id,
       v8::Local<v8::Array> headers) { return false; }
-  virtual bool BlockStream(int64_t id) { return true; }
 
   inline Environment* env() const;
 
+  bool SendPendingData();
   size_t max_header_pairs() const { return max_header_pairs_; }
   size_t max_header_length() const { return max_header_length_; }
 
@@ -547,13 +546,17 @@ class QuicApplication : public MemoryRetainer {
     size_t remaining = 0;
     int64_t id = -1;
     int fin = 0;
-    ngtcp2_vec data[16] {};
+    ngtcp2_vec data[MAX_VECTOR_COUNT] {};
     ngtcp2_vec* buf = nullptr;
     void* user_data = nullptr;
     uint8_t* pos = nullptr;
     StreamData() { buf = data; }
   };
 
+  void Acknowledge(
+      int64_t stream_id,
+      uint64_t offset,
+      size_t datalen);
   virtual int GetStreamData(StreamData* data) = 0;
   virtual bool StreamCommit(StreamData* data, size_t datalen) = 0;
   virtual bool ShouldSetFin(const StreamData& data) = 0;
@@ -565,6 +568,7 @@ class QuicApplication : public MemoryRetainer {
       const StreamData& stream_data);
 
  private:
+  void MaybeSetFin(const StreamData& stream_data);
   QuicSession* session_;
   bool needs_init_ = true;
   size_t max_header_pairs_ = 0;
@@ -849,9 +853,6 @@ class QuicSession : public AsyncWrap,
 
   // Causes pending ngtcp2 frames to be serialized and sent
   void SendPendingData();
-
-  // Causes pending QuicStream data to be serialized and sent
-  bool SendStreamData(QuicStream* stream);
 
   inline bool SendPacket(
       std::unique_ptr<QuicPacket> packet,

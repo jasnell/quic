@@ -1098,6 +1098,121 @@ void QuicCryptoContext::WriteHandshake(
   handshake_[level].Push(std::move(buffer));
 }
 
+void QuicApplication::Acknowledge(
+    int64_t stream_id,
+    uint64_t offset,
+    size_t datalen) {
+  QuicStream* stream = session()->FindStream(stream_id);
+  if (stream != nullptr) {
+    stream->Acknowledge(offset, datalen);
+    ResumeStream(stream_id);
+  }
+}
+
+bool QuicApplication::SendPendingData() {
+  // The maximum number of packets to send per call
+  static constexpr size_t MAX_PACKETS = 16;
+  QuicPathStorage path;
+  std::unique_ptr<QuicPacket> packet;
+  uint8_t* pos = nullptr;
+  size_t packets_sent = 0;
+  int err;
+
+  for (;;) {
+    ssize_t ndatalen;
+    StreamData stream_data;
+    err = GetStreamData(&stream_data);
+    if (err < 0) {
+      session()->set_last_error(QUIC_ERROR_APPLICATION, err);
+      return false;
+    }
+
+    // If stream_data.id is -1, then we're not serializing any data for any
+    // specific stream. We still need to process QUIC session packets tho.
+    if (stream_data.id > -1)
+      Debug(session(), "Serializing packets for stream id %" PRId64,
+            stream_data.id);
+    else
+      Debug(session(), "Serializing session packets");
+
+    // If the packet was sent previously, then packet will have been reset.
+    if (!packet) {
+      packet = CreateStreamDataPacket();
+      pos = packet->data();
+    }
+
+    ssize_t nwrite = WriteVStream(&path, pos, &ndatalen, stream_data);
+
+    if (nwrite <= 0) {
+      switch (nwrite) {
+        case 0:
+          goto congestion_limited;
+        case NGTCP2_ERR_PKT_NUM_EXHAUSTED:
+          // There is a finite number of packets that can be sent
+          // per connection. Once those are exhausted, there's
+          // absolutely nothing we can do except immediately
+          // and silently tear down the QuicSession. This has
+          // to be silent because we can't even send a
+          // CONNECTION_CLOSE since even those require a
+          // packet number.
+          session()->SilentClose();
+          return false;
+        case NGTCP2_ERR_STREAM_DATA_BLOCKED:
+          session()->StreamDataBlocked(stream_data.id);
+          if (session()->max_data_left() == 0)
+            goto congestion_limited;
+          // Fall through
+        case NGTCP2_ERR_STREAM_SHUT_WR:
+          if (UNLIKELY(!BlockStream(stream_data.id)))
+            return false;
+          continue;
+        case NGTCP2_ERR_STREAM_NOT_FOUND:
+          continue;
+        case NGTCP2_ERR_WRITE_STREAM_MORE:
+          CHECK_GT(ndatalen, 0);
+          CHECK(StreamCommit(&stream_data, ndatalen));
+          pos += ndatalen;
+          continue;
+      }
+      session()->set_last_error(QUIC_ERROR_SESSION, static_cast<int>(nwrite));
+      return false;
+    }
+
+    pos += nwrite;
+
+    if (ndatalen >= 0)
+      CHECK(StreamCommit(&stream_data, ndatalen));
+
+    Debug(session(), "Sending %" PRIu64 " bytes in serialized packet", nwrite);
+    packet->set_length(nwrite);
+    if (!session()->SendPacket(std::move(packet), path))
+      return false;
+    packet.reset();
+    pos = nullptr;
+    MaybeSetFin(stream_data);
+    if (++packets_sent == MAX_PACKETS)
+      break;
+  }
+  return true;
+
+ congestion_limited:
+  // We are either congestion limited or done.
+  if (pos - packet->data()) {
+    // Some data was serialized into the packet. We need to send it.
+    packet->set_length(pos - packet->data());
+    Debug(session(), "Congestion limited, but %" PRIu64 " bytes pending.",
+          packet->length());
+    if (!session()->SendPacket(std::move(packet), path))
+      return false;
+  }
+  return true;
+}
+
+void QuicApplication::MaybeSetFin(const StreamData& stream_data) {
+  if (ShouldSetFin(stream_data))
+    set_stream_fin(stream_data.id);
+}
+
 void QuicApplication::StreamHeaders(
     int64_t stream_id,
     int kind,
@@ -2038,32 +2153,6 @@ void QuicSession::UsePreferredAddressStrategy(
     Debug(session,
           "Not using server preferred address due to IP version mismatch");
   }
-}
-
-// Sends buffered stream data.
-bool QuicSession::SendStreamData(QuicStream* stream) {
-  // Because SendStreamData calls ngtcp2_conn_writev_streams,
-  // it is not permitted to be called while we are running within
-  // an ngtcp2 callback function.
-  CHECK(!Ngtcp2CallbackScope::InNgtcp2CallbackScope(this));
-
-  // No stream data may be serialized and sent if:
-  //   - the QuicSession is destroyed
-  //   - the QuicStream was never writable,
-  //   - a final stream frame has already been sent,
-  //   - the QuicSession is in the draining period,
-  //   - the QuicSession is in the closing period, or
-  //   - we are blocked from sending any data because of flow control
-  if (is_destroyed() ||
-      !stream->was_ever_writable() ||
-      stream->has_sent_fin() ||
-      is_in_draining_period() ||
-      is_in_closing_period() ||
-      max_data_left() == 0) {
-    return true;
-  }
-
-  return application_->SendStreamData(stream);
 }
 
 // Passes a serialized packet to the associated QuicSocket.
