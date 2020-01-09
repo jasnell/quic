@@ -124,7 +124,7 @@ int DefaultApplication::GetStreamData(StreamData* stream_data) {
           &stream_data->count,
           MAX_VECTOR_COUNT);
 
-  stream_data->user_data = stream;
+  stream_data->stream.reset(stream);
   stream_data->id = stream->id();
   stream_data->fin = stream->is_writable() ? 0 : 1;
 
@@ -133,7 +133,7 @@ int DefaultApplication::GetStreamData(StreamData* stream_data) {
   // that yet as it depends entirely on how much data actually gets
   // serialized by ngtcp2.
   if (stream_data->count > 0)
-    ScheduleStream(stream->id());
+    stream->Schedule(&stream_queue_);
 
   Debug(session(), "Selected %" PRId64 " buffers for stream %" PRId64 "%s",
         stream_data->count,
@@ -145,20 +145,18 @@ int DefaultApplication::GetStreamData(StreamData* stream_data) {
 bool DefaultApplication::StreamCommit(
     StreamData* stream_data,
     size_t datalen) {
-  QuicStream* stream = static_cast<QuicStream*>(stream_data->user_data);
-  CHECK_NOT_NULL(stream);
+  CHECK(stream_data->stream);
   stream_data->remaining -= datalen;
   Consume(&stream_data->buf, &stream_data->count, datalen);
-  stream->Commit(datalen);
+  stream_data->stream->Commit(datalen);
   return true;
 }
 
 bool DefaultApplication::ShouldSetFin(const StreamData& stream_data) {
-  if (stream_data.user_data == nullptr ||
+  if (!stream_data.stream ||
       !IsEmpty(stream_data.buf, stream_data.count))
     return false;
-  QuicStream* stream = static_cast<QuicStream*>(stream_data.user_data);
-  return !stream->is_writable();
+  return !stream_data.stream->is_writable();
 }
 
 }  // namespace quic

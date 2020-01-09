@@ -341,10 +341,10 @@ class QuicStream : public AsyncWrap, public StreamBase {
   inline bool SubmitTrailers(v8::Local<v8::Array> headers);
 
   // Required for StreamBase
-  inline bool IsAlive() override;
-  inline bool IsClosing() override;
-  inline int ReadStart() override;
-  inline int ReadStop() override;
+  bool IsAlive() override;
+  bool IsClosing() override;
+  int ReadStart() override;
+  int ReadStop() override;
   int DoShutdown(ShutdownWrap* req_wrap) override;
 
   AsyncWrap* GetAsyncWrap() override { return this; }

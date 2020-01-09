@@ -75,14 +75,6 @@ bool QuicStream::is_read_paused() const {
   return flags_ & QUICSTREAM_FLAG_READ_PAUSED;
 }
 
-bool QuicStream::IsAlive() {
-  return !is_destroyed() && !IsClosing();
-}
-
-bool QuicStream::IsClosing() {
-  return !is_writable() && !is_readable();
-}
-
 void QuicStream::set_fin_sent() {
   CHECK(!is_writable());
   flags_ |= QUICSTREAM_FLAG_FIN_SENT;
@@ -166,26 +158,6 @@ void QuicStream::Commit(ssize_t amount) {
   CHECK(!is_destroyed());
   CHECK_GE(amount, 0);
   streambuf_.Seek(amount);
-}
-
-int QuicStream::ReadStart() {
-  CHECK(!is_destroyed());
-  CHECK(is_readable());
-  set_read_start();
-  set_read_resume();
-  IncrementStat(
-      inbound_consumed_data_while_paused_,
-      &stream_stats_,
-      &stream_stats::max_offset);
-  session_->ExtendStreamOffset(this, inbound_consumed_data_while_paused_);
-  return 0;
-}
-
-int QuicStream::ReadStop() {
-  CHECK(!is_destroyed());
-  CHECK(is_readable());
-  set_read_pause();
-  return 0;
 }
 
 void QuicStream::ResetStream(uint64_t app_error_code) {

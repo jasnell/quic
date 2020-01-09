@@ -1111,7 +1111,7 @@ void QuicApplication::Acknowledge(
 
 bool QuicApplication::SendPendingData() {
   // The maximum number of packets to send per call
-  static constexpr size_t MAX_PACKETS = 16;
+  static constexpr size_t kMaxPackets = 16;
   QuicPathStorage path;
   std::unique_ptr<QuicPacket> packet;
   uint8_t* pos = nullptr;
@@ -1190,7 +1190,7 @@ bool QuicApplication::SendPendingData() {
     packet.reset();
     pos = nullptr;
     MaybeSetFin(stream_data);
-    if (++packets_sent == MAX_PACKETS)
+    if (++packets_sent == kMaxPackets)
       break;
   }
   return true;

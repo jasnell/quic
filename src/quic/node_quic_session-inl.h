@@ -149,7 +149,7 @@ ssize_t QuicApplication::WriteVStream(
     uint8_t* buf,
     ssize_t* ndatalen,
     const StreamData& stream_data) {
-  CHECK_LE(stream_data.count, 16);
+  CHECK_LE(stream_data.count, MAX_VECTOR_COUNT);
   return ngtcp2_conn_writev_stream(
     session()->connection(),
     &path->path,

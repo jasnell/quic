@@ -548,8 +548,7 @@ class QuicApplication : public MemoryRetainer {
     int fin = 0;
     ngtcp2_vec data[MAX_VECTOR_COUNT] {};
     ngtcp2_vec* buf = nullptr;
-    void* user_data = nullptr;
-    uint8_t* pos = nullptr;
+    BaseObjectPtr<QuicStream> stream;
     StreamData() { buf = data; }
   };
 

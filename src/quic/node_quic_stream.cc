@@ -203,8 +203,7 @@ int QuicStream::DoShutdown(ShutdownWrap* req_wrap) {
     session()->ResumeStream(stream_id_);
   }
 
-  req_wrap->Done(0);
-  return 0;
+  return 1;
 }
 
 int QuicStream::DoWrite(
@@ -262,6 +261,34 @@ int QuicStream::DoWrite(
   session()->ResumeStream(stream_id_);
 
   // IncrementAvailableOutboundLength(len);
+  return 0;
+}
+
+bool QuicStream::IsAlive() {
+  return !is_destroyed() && !IsClosing();
+}
+
+bool QuicStream::IsClosing() {
+  return !is_writable() && !is_readable();
+}
+
+int QuicStream::ReadStart() {
+  CHECK(!is_destroyed());
+  CHECK(is_readable());
+  set_read_start();
+  set_read_resume();
+  IncrementStat(
+      inbound_consumed_data_while_paused_,
+      &stream_stats_,
+      &stream_stats::max_offset);
+  session_->ExtendStreamOffset(this, inbound_consumed_data_while_paused_);
+  return 0;
+}
+
+int QuicStream::ReadStop() {
+  CHECK(!is_destroyed());
+  CHECK(is_readable());
+  set_read_pause();
   return 0;
 }
 
