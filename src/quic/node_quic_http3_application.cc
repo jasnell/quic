@@ -609,7 +609,7 @@ bool Http3Application::SendStreamData(QuicStream* stream) {
 
 // This is where nghttp3 pulls the data from the outgoing
 // buffer to prepare it to be sent on the QUIC stream.
-ssize_t Http3Application::H3ReadData(
+ssize_t Http3Application::ReadData(
     int64_t stream_id,
     nghttp3_vec* vec,
     size_t veccnt,
@@ -644,17 +644,17 @@ ssize_t Http3Application::H3ReadData(
 }
 
 // Outgoing data is retained in memory until it is acknowledged.
-void Http3Application::H3AckedStreamData(
+void Http3Application::AckedStreamData(
     int64_t stream_id,
     size_t datalen) {
   QuicStream* stream = session()->FindStream(stream_id);
-  if (stream) {
+  if (stream != nullptr) {
     stream->Acknowledge(0, datalen);
-    nghttp3_conn_resume_stream(connection(), stream_id);
+    ResumeStream(stream_id);
   }
 }
 
-void Http3Application::H3StreamClose(
+void Http3Application::StreamClosed(
     int64_t stream_id,
     uint64_t app_error_code) {
   session()->listener()->OnStreamClose(stream_id, app_error_code);
@@ -662,7 +662,7 @@ void Http3Application::H3StreamClose(
 
 QuicStream* Http3Application::FindOrCreateStream(int64_t stream_id) {
   QuicStream* stream = session()->FindStream(stream_id);
-  if (!stream) {
+  if (stream == nullptr) {
     if (session()->is_gracefully_closing()) {
       nghttp3_conn_close_stream(connection(), stream_id, NGTCP2_ERR_CLOSING);
       return nullptr;
@@ -674,22 +674,22 @@ QuicStream* Http3Application::FindOrCreateStream(int64_t stream_id) {
   return stream;
 }
 
-void Http3Application::H3ReceiveData(
+void Http3Application::ReceiveData(
     int64_t stream_id,
     const uint8_t* data,
     size_t datalen) {
   QuicStream* stream = FindOrCreateStream(stream_id);
-  if (stream)
+  if (stream != nullptr)
     stream->ReceiveData(0, data, datalen, 0);
 }
 
-void Http3Application::H3DeferredConsume(
+void Http3Application::DeferredConsume(
     int64_t stream_id,
     size_t consumed) {
-  H3ReceiveData(stream_id, nullptr, consumed);
+  ReceiveData(stream_id, nullptr, consumed);
 }
 
-void Http3Application::H3BeginHeaders(
+void Http3Application::BeginHeaders(
   int64_t stream_id,
   QuicStreamHeadersKind kind) {
   QuicStream* stream = FindOrCreateStream(stream_id);
@@ -702,7 +702,7 @@ void Http3Application::H3BeginHeaders(
 // by the QuicStream until stream->EndHeaders() is called, during which
 // the collected headers are converted to an array and passed off to
 // the javascript side.
-bool Http3Application::H3ReceiveHeader(
+bool Http3Application::ReceiveHeader(
     int64_t stream_id,
     int32_t token,
     nghttp3_rcbuf* name,
@@ -713,7 +713,7 @@ bool Http3Application::H3ReceiveHeader(
   if (!IsZeroLengthHeader(name, value)) {
     Debug(session(), "Receiving header for stream %" PRId64, stream_id);
     QuicStream* stream = session()->FindStream(stream_id);
-    if (stream) {
+    if (stream != nullptr) {
       if (token == NGHTTP3_QPACK_TOKEN__STATUS) {
         nghttp3_vec vec = nghttp3_rcbuf_get_buf(value);
         if (vec.base[0] == '1')
@@ -728,22 +728,22 @@ bool Http3Application::H3ReceiveHeader(
   return true;
 }
 
-void Http3Application::H3EndHeaders(int64_t stream_id) {
+void Http3Application::EndHeaders(int64_t stream_id) {
   Debug(session(), "Ending header block for stream %" PRId64, stream_id);
   QuicStream* stream = session()->FindStream(stream_id);
-  if (stream)
+  if (stream != nullptr)
     stream->EndHeaders();
 }
 
 // TODO(@jasnell): Implement Push Promise Support
-int Http3Application::H3BeginPushPromise(
+int Http3Application::BeginPushPromise(
     int64_t stream_id,
     int64_t push_id) {
   return 0;
 }
 
 // TODO(@jasnell): Implement Push Promise Support
-bool Http3Application::H3ReceivePushPromise(
+bool Http3Application::ReceivePushPromise(
     int64_t stream_id,
     int64_t push_id,
     int32_t token,
@@ -754,37 +754,35 @@ bool Http3Application::H3ReceivePushPromise(
 }
 
 // TODO(@jasnell): Implement Push Promise Support
-int Http3Application::H3EndPushPromise(
+int Http3Application::EndPushPromise(
     int64_t stream_id,
     int64_t push_id) {
   return 0;
 }
 
 // TODO(@jasnell): Implement Push Promise Support
-void Http3Application::H3CancelPush(
+void Http3Application::CancelPush(
     int64_t push_id,
     int64_t stream_id) {
 }
 
 // TODO(@jasnell): Implement Push Promise Support
-int Http3Application::H3PushStream(
+int Http3Application::PushStream(
     int64_t push_id,
     int64_t stream_id) {
   return 0;
 }
 
-void Http3Application::H3SendStopSending(
+void Http3Application::SendStopSending(
     int64_t stream_id,
     uint64_t app_error_code) {
   session()->ResetStream(stream_id, app_error_code);
 }
 
-int Http3Application::H3EndStream(
-    int64_t stream_id) {
-  QuicStream* stream = FindOrCreateStream(stream_id);
-  if (stream)
+void Http3Application::EndStream(int64_t stream_id) {
+  QuicStream* stream = session()->FindStream(stream_id);
+  if (stream != nullptr)
     stream->ReceiveData(1, nullptr, 0, 0);
-  return 0;
 }
 
 const nghttp3_conn_callbacks Http3Application::callbacks_[2] = {
@@ -837,7 +835,7 @@ int Http3Application::OnAckedStreamData(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3AckedStreamData(stream_id, datalen);
+  app->AckedStreamData(stream_id, datalen);
   return 0;
 }
 
@@ -848,7 +846,7 @@ int Http3Application::OnStreamClose(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3StreamClose(stream_id, app_error_code);
+  app->StreamClosed(stream_id, app_error_code);
   return 0;
 }
 
@@ -860,7 +858,7 @@ int Http3Application::OnReceiveData(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3ReceiveData(stream_id, data, datalen);
+  app->ReceiveData(stream_id, data, datalen);
   return 0;
 }
 
@@ -871,7 +869,7 @@ int Http3Application::OnDeferredConsume(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3DeferredConsume(stream_id, consumed);
+  app->DeferredConsume(stream_id, consumed);
   return 0;
 }
 
@@ -881,7 +879,7 @@ int Http3Application::OnBeginHeaders(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3BeginHeaders(stream_id);
+  app->BeginHeaders(stream_id);
   return 0;
 }
 
@@ -891,7 +889,7 @@ int Http3Application::OnBeginTrailers(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3BeginHeaders(stream_id, QUICSTREAM_HEADERS_KIND_TRAILING);
+  app->BeginHeaders(stream_id, QUICSTREAM_HEADERS_KIND_TRAILING);
   return 0;
 }
 
@@ -907,7 +905,7 @@ int Http3Application::OnReceiveHeader(
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
   // TODO(@jasnell): Need to determine the appropriate response code here
   // for when the header is not going to be accepted.
-  return app->H3ReceiveHeader(stream_id, token, name, value, flags) ?
+  return app->ReceiveHeader(stream_id, token, name, value, flags) ?
       0 : NGHTTP3_ERR_CALLBACK_FAILURE;
 }
 
@@ -917,7 +915,7 @@ int Http3Application::OnEndHeaders(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3EndHeaders(stream_id);
+  app->EndHeaders(stream_id);
   return 0;
 }
 
@@ -928,7 +926,7 @@ int Http3Application::OnBeginPushPromise(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  return app->H3BeginPushPromise(stream_id, push_id);
+  return app->BeginPushPromise(stream_id, push_id);
 }
 
 int Http3Application::OnReceivePushPromise(
@@ -942,7 +940,7 @@ int Http3Application::OnReceivePushPromise(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  return app->H3ReceivePushPromise(
+  return app->ReceivePushPromise(
       stream_id,
       push_id,
       token,
@@ -958,7 +956,7 @@ int Http3Application::OnEndPushPromise(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  return app->H3EndPushPromise(stream_id, push_id);
+  return app->EndPushPromise(stream_id, push_id);
 }
 
 int Http3Application::OnCancelPush(
@@ -968,7 +966,7 @@ int Http3Application::OnCancelPush(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3CancelPush(push_id, stream_id);
+  app->CancelPush(push_id, stream_id);
   return 0;
 }
 
@@ -979,7 +977,7 @@ int Http3Application::OnSendStopSending(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->H3SendStopSending(stream_id, app_error_code);
+  app->SendStopSending(stream_id, app_error_code);
   return 0;
 }
 
@@ -989,7 +987,7 @@ int Http3Application::OnPushStream(
     int64_t stream_id,
     void* conn_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  return app->H3PushStream(push_id, stream_id);
+  return app->PushStream(push_id, stream_id);
 }
 
 int Http3Application::OnEndStream(
@@ -998,7 +996,8 @@ int Http3Application::OnEndStream(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  return app->H3EndStream(stream_id);
+  app->EndStream(stream_id);
+  return 0;
 }
 
 ssize_t Http3Application::OnReadData(
@@ -1010,7 +1009,7 @@ ssize_t Http3Application::OnReadData(
     void* conn_user_data,
     void* stream_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  return app->H3ReadData(stream_id, vec, veccnt, pflags);
+  return app->ReadData(stream_id, vec, veccnt, pflags);
 }
 }  // namespace quic
 }  // namespace node

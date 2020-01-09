@@ -151,39 +151,39 @@ class Http3Application final :
   bool StreamCommit(StreamData* stream_data, size_t datalen) override;
   bool ShouldSetFin(const StreamData& data) override;
 
-  ssize_t H3ReadData(
+  ssize_t ReadData(
       int64_t stream_id,
       nghttp3_vec* vec,
       size_t veccnt,
       uint32_t* pflags);
 
-  void H3AckedStreamData(int64_t stream_id, size_t datalen);
-  void H3StreamClose(int64_t stream_id, uint64_t app_error_code);
-  void H3ReceiveData(int64_t stream_id, const uint8_t* data, size_t datalen);
-  void H3DeferredConsume(int64_t stream_id, size_t consumed);
-  void H3BeginHeaders(
+  void AckedStreamData(int64_t stream_id, size_t datalen);
+  void StreamClosed(int64_t stream_id, uint64_t app_error_code);
+  void ReceiveData(int64_t stream_id, const uint8_t* data, size_t datalen);
+  void DeferredConsume(int64_t stream_id, size_t consumed);
+  void BeginHeaders(
       int64_t stream_id,
       QuicStreamHeadersKind kind = QUICSTREAM_HEADERS_KIND_NONE);
-  bool H3ReceiveHeader(
+  bool ReceiveHeader(
       int64_t stream_id,
       int32_t token,
       nghttp3_rcbuf* name,
       nghttp3_rcbuf* value,
       uint8_t flags);
-  void H3EndHeaders(int64_t stream_id);
-  int H3BeginPushPromise(int64_t stream_id, int64_t push_id);
-  bool H3ReceivePushPromise(
+  void EndHeaders(int64_t stream_id);
+  int BeginPushPromise(int64_t stream_id, int64_t push_id);
+  bool ReceivePushPromise(
       int64_t stream_id,
       int64_t push_id,
       int32_t token,
       nghttp3_rcbuf* name,
       nghttp3_rcbuf* value,
       uint8_t flags);
-  int H3EndPushPromise(int64_t stream_id, int64_t push_id);
-  void H3CancelPush(int64_t push_id, int64_t stream_id);
-  void H3SendStopSending(int64_t stream_id, uint64_t app_error_code);
-  int H3PushStream(int64_t push_id, int64_t stream_id);
-  int H3EndStream(int64_t stream_id);
+  int EndPushPromise(int64_t stream_id, int64_t push_id);
+  void CancelPush(int64_t push_id, int64_t stream_id);
+  void SendStopSending(int64_t stream_id, uint64_t app_error_code);
+  int PushStream(int64_t push_id, int64_t stream_id);
+  void EndStream(int64_t stream_id);
 
   bool is_control_stream(int64_t stream_id) const {
     return stream_id == control_stream_id_ ||
