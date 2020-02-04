@@ -38,22 +38,28 @@ const { once } = require('events');
 
   const client = quic.createSocket({ client: { key, cert, ca, alpn: 'meow' } });
 
+  const reqs = [];
   for (const server of servers) {
     const req = client.connect({
       address: 'localhost',
       port: server.endpoints[0].address.port
     });
 
-    const [ stream ] = await once(req, 'stream');
-    stream.resume();
-    await once(stream, 'end');
-
-    server.close();
-    req.close();
-    await once(req, 'close');
+    req.on('stream', common.mustCall((stream) => {
+      stream.resume();
+      stream.on('close', common.mustCall(() => {
+        req.close();
+      }));
+    }));
+    reqs.push(once(req, 'close'));
   }
+  await Promise.all(reqs);
 
   client.close();
 
   await once(client, 'close');
+  for (const server of servers)
+    server.close();
+
+  await Promise.all(servers.map((server) => once(server, 'close')));
 })().then(common.mustCall());
