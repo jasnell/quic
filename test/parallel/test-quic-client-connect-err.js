@@ -108,7 +108,7 @@ const client = createSocket();
 });
 
 // activeConnectionIdLimit must be between 2 and 8, inclusive
-[1, 9].forEach(( activeConnectionIdLimit ) => {
+[1, 9].forEach((activeConnectionIdLimit) => {
   assert.throws(() => client.connect({ activeConnectionIdLimit }), {
     code: 'ERR_OUT_OF_RANGE'
   });
