@@ -4,6 +4,7 @@
 
 const { debuglog } = require('util');
 const fixtures = require('./fixtures');
+const kHttp3Alpn = 'h3-25';
 
 const [ key, cert, ca ] =
   fixtures.readKeys(
@@ -32,4 +33,5 @@ module.exports = {
   kServerPort,
   kClientPort,
   setupKeylog,
+  kHttp3Alpn,
 };
