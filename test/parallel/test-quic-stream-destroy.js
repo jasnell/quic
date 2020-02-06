@@ -10,7 +10,6 @@ if (!common.hasQuic)
   common.skip('missing quic');
 
 const assert = require('assert');
-const fs = require('fs');
 const {
   debug,
   key,

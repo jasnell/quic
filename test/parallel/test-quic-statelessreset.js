@@ -10,7 +10,7 @@ if (!common.hasQuic)
 const { internalBinding } = require('internal/test/binding');
 const assert = require('assert');
 
-const { key, cert, ca  } = require('../common/quic');
+const { key, cert, ca } = require('../common/quic');
 
 const {
   kHandle,

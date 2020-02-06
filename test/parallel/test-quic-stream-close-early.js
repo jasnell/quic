@@ -16,7 +16,6 @@ const {
   kClientPort,
   setupKeylog
 } = require('../common/quic');
-const fs = require('fs');
 
 const { createSocket } = require('quic');
 

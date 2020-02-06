@@ -10,7 +10,6 @@ if (!common.hasQuic)
 const Countdown = require('../common/countdown');
 const assert = require('assert');
 const fs = require('fs');
-const fixtures = require('../common/fixtures');
 
 const {
   key,

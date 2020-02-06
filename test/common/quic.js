@@ -1,13 +1,14 @@
+/* eslint-disable node-core/require-common-first, node-core/required-modules */
 'use strict';
 
 // Common bits for all QUIC-related tests
-
 const { debuglog } = require('util');
-const fixtures = require('./fixtures');
+const { readKeys } = require('./fixtures');
+const { createWriteStream } = require('fs');
 const kHttp3Alpn = 'h3-25';
 
 const [ key, cert, ca ] =
-  fixtures.readKeys(
+  readKeys(
     'binary',
     'agent1-key.pem',
     'agent1-cert.pem',
@@ -20,7 +21,7 @@ const kClientPort = process.env.NODE_DEBUG_KEYLOG ? 5679 : 0;
 
 function setupKeylog(session) {
   if (process.env.NODE_DEBUG_KEYLOG) {
-    const kl = fs.createWriteStream(process.env.NODE_DEBUG_KEYLOG);
+    const kl = createWriteStream(process.env.NODE_DEBUG_KEYLOG);
     session.on('keylog', kl.write.bind(kl));
   }
 }
