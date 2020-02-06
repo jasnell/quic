@@ -1,8 +1,11 @@
 // Flags: --no-warnings
 'use strict';
 
-// TODO support ipv6
 const common = require('../common');
+
+if (!common.hasIPv6)
+  common.skip('missing ipv6');
+
 if (!common.hasQuic)
   common.skip('missing quic');
 
@@ -57,8 +60,8 @@ const kALPN = 'zzz';
   }));
 }
 
-// // When the `ipv6Only` set to `true`, a client cann't connect to it
-// // through "127.0.0.1".
+// When the `ipv6Only` set to `true`, a client cann't connect to it
+// through "127.0.0.1".
 {
   const server = createSocket({ endpoint: { type: 'udp6', ipv6Only: true } });
 
