@@ -913,6 +913,15 @@ added: REPLACEME
 
 A `BigInt` representing the length of time taken to complete the TLS handshake.
 
+#### quicsession.idleTimeout
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {boolean}
+
+Set to `true` if the `QuicSession` was closed due to an idle timeout.
+
 #### quicsession.keyUpdateCount
 <!-- YAML
 added: REPLACEME
