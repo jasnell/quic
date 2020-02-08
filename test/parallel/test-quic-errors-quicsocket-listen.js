@@ -109,6 +109,19 @@ const { createSocket } = require('quic');
     });
   });
 
+  [1, 1n, false, [], {}, null].forEach((ciphers) => {
+    assert.throws(() => server.listen({ ciphers }), {
+      code: 'ERR_INVALID_ARG_TYPE'
+    });
+  });
+
+  [1, 1n, false, [], {}, null].forEach((groups) => {
+    assert.throws(() => server.listen({ groups }), {
+      code: 'ERR_INVALID_ARG_TYPE'
+    });
+  });
+
+
   // Make sure that after all of the validation checks, the socket
   // is not actually marked as listening at all.
   assert.strictEqual(typeof server.listening, 'boolean');
@@ -135,10 +148,11 @@ const { createSocket } = require('quic');
 // SecureContext Options
 // * [ ] ca
 // * [ ] cert
-// * [ ] ciphers
+// * [x] ciphers
 // * [ ] clientCertEngine
 // * [ ] crl
 // * [ ] dhparam
+// * [ ] groups
 // * [ ] ecdhCurve
 // * [ ] honorCipherOrder
 // * [ ] key
