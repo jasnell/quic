@@ -74,7 +74,7 @@ assert(endpoint);
 
 [
   { rx: -1 },
-  { rx: 1.1},
+  { rx: 1.1 },
   { tx: -1 },
   { tx: 1.1 }
 ].forEach((options) => {
