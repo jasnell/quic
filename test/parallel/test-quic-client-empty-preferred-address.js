@@ -54,4 +54,4 @@ const { once } = require('events');
     once(stream, 'close'),
     once(client, 'close'),
     once(server, 'close')]);
-})();
+})().then(common.mustCall());

@@ -40,8 +40,9 @@ const options = { key, cert, ca, alpn: kALPN };
 
   await Promise.all([
     once(client, 'close'),
-    once(server, 'close')]);
-})();
+    once(server, 'close')
+  ]);
+})().then(common.mustCall());
 
 
 (async () => {
@@ -57,7 +58,8 @@ const options = { key, cert, ca, alpn: kALPN };
     server.close();
     await Promise.all([
       once(client, 'close'),
-      once(server, 'close')]);
+      once(server, 'close')
+    ]);
   }));
 
   await once(server, 'ready');
@@ -68,4 +70,4 @@ const options = { key, cert, ca, alpn: kALPN };
   });
 
   await once(session, 'close');
-})();
+})().then(common.mustCall());

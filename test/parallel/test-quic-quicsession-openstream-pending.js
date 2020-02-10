@@ -50,5 +50,6 @@ const options = { key, cert, ca, alpn: 'meow' };
 
   await Promise.allSettled([
     once(server, 'close'),
-    once(client, 'close')]);
-})();
+    once(client, 'close')
+  ]);
+})().then(common.mustCall());

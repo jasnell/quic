@@ -59,8 +59,9 @@ const options = { key, cert, ca, alpn: 'zzz' };
 
   await Promise.allSettled([
     once(server, 'close'),
-    once(client, 'close')]);
+    once(client, 'close')
+  ]);
 
   assert.strictEqual(kServerKeylogs.length, 0);
   assert.strictEqual(kClientKeylogs.length, 0);
-})();
+})().then(common.mustCall());

@@ -60,8 +60,9 @@ const kALPN = 'zzz';
 
   await Promise.allSettled([
     once(client, 'close'),
-    once(server, 'close')]);
-})();
+    once(server, 'close')
+  ]);
+})().then(common.mustCall());
 
 // When the `ipv6Only` set to `true`, a client cann't connect to it
 // through "127.0.0.1".
@@ -89,7 +90,8 @@ const kALPN = 'zzz';
 
   await Promise.allSettled([
     once(client, 'close'),
-    once(server, 'close')]);
+    once(server, 'close')
+  ]);
 })();
 
 // Creating the QuicSession fails when connect type does not match the
@@ -121,5 +123,6 @@ const kALPN = 'zzz';
 
   await Promise.allSettled([
     once(client, 'close'),
-    once(server, 'close')]);
-})();
+    once(server, 'close')
+  ]);
+})().then(common.mustCall());
