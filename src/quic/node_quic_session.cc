@@ -1997,6 +1997,22 @@ bool QuicSession::SendConnectionClose() {
   // serialize the connection close once but may end up transmitting
   // it multiple times; whereas for clients, we will serialize it
   // once and send once only.
+  QuicError error = last_error();
+
+  // If initial keys have not yet been installed, use the alternative
+  // ImmediateConnectionClose to send a stateless connection close to
+  // the peer.
+  if (crypto_context()->write_crypto_level() ==
+        NGTCP2_CRYPTO_LEVEL_INITIAL) {
+    socket()->ImmediateConnectionClose(
+        dcid(),
+        scid_,
+        local_address_,
+        remote_address_,
+        error.code);
+    return true;
+  }
+
   switch (crypto_context_->side()) {
     case NGTCP2_CRYPTO_SIDE_SERVER: {
       // If we're not already in the closing period,
@@ -2005,7 +2021,7 @@ bool QuicSession::SendConnectionClose() {
       // already started, skip this.
       if (!is_in_closing_period() &&
           (!WritePackets("server connection close - write packets") ||
-          !StartClosingPeriod())) {
+           !StartClosingPeriod())) {
           return false;
       }
 
@@ -2016,18 +2032,16 @@ bool QuicSession::SendConnectionClose() {
     }
     case NGTCP2_CRYPTO_SIDE_CLIENT: {
       UpdateIdleTimer();
-      auto packet = QuicPacket::Create(
-          "client connection close");
-      QuicError error = last_error();
+      auto packet = QuicPacket::Create("client connection close");
 
       // If we're not already in the closing period,
       // first attempt to write any pending packets, then
       // start the closing period. Note that the behavior
       // here is different than the server
       if (!is_in_closing_period() &&
-        !WritePackets("client connection close - write packets"))
+          !WritePackets("client connection close - write packets")) {
         return false;
-
+      }
       ssize_t nwrite =
           SelectCloseFn(error.family)(
             connection(),
