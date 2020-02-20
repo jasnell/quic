@@ -611,6 +611,11 @@ int AlpnSelection(
   return SSL_TLSEXT_ERR_OK;
 }
 
+int AllowEarlyDataCB(SSL* ssl, void* arg) {
+  QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
+  return session->allow_early_data() ? 1 : 0;
+}
+
 int TLS_Status_Callback(SSL* ssl, void* arg) {
   QuicSession* session = static_cast<QuicSession*>(SSL_get_app_data(ssl));
   return session->crypto_context()->OnTLSStatus();
@@ -739,6 +744,7 @@ void InitializeTLS(const QuicSession& session) {
 
 void InitializeSecureContext(
     crypto::SecureContext* sc,
+    bool early_data,
     ngtcp2_crypto_side side) {
   constexpr auto ssl_server_opts =
       (SSL_OP_ALL & ~SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) |
@@ -749,9 +755,14 @@ void InitializeSecureContext(
     case NGTCP2_CRYPTO_SIDE_SERVER:
       SSL_CTX_set_options(**sc, ssl_server_opts);
       SSL_CTX_set_mode(**sc, SSL_MODE_RELEASE_BUFFERS);
-      SSL_CTX_set_max_early_data(**sc, std::numeric_limits<uint32_t>::max());
+
       SSL_CTX_set_alpn_select_cb(**sc, AlpnSelection, nullptr);
       SSL_CTX_set_client_hello_cb(**sc, Client_Hello_CB, nullptr);
+
+      if (early_data) {
+        SSL_CTX_set_max_early_data(**sc, 0xffffffff);
+        SSL_CTX_set_allow_early_data_cb(**sc, AllowEarlyDataCB, nullptr);
+      }
       break;
     case NGTCP2_CRYPTO_SIDE_CLIENT:
       SSL_CTX_set_session_cache_mode(

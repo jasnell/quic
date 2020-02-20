@@ -47,6 +47,7 @@ bool SetCryptoSecrets(
 // QUIC side (client or server).
 void InitializeSecureContext(
     crypto::SecureContext* sc,
+    bool early_data,
     ngtcp2_crypto_side side);
 
 // Called in the QuicSession::InitServer and
