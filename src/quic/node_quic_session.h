@@ -543,6 +543,23 @@ class QuicApplication : public MemoryRetainer {
   virtual void ExtendMaxStreamsRemoteBidi(uint64_t max_streams) {}
   virtual void ExtendMaxStreamData(int64_t stream_id, uint64_t max_data) {}
   virtual void ResumeStream(int64_t stream_id) {}
+  virtual void SetSessionTicketAppData(const SessionTicketAppData& app_data) {
+    // TODO(@jasnell): Different QUIC applications may wish to set some
+    // application data in the session ticket (e.g. http/3 would set
+    // server settings in the application data). For now, doing nothing
+    // as I'm just adding the basic mechanism.
+  }
+  virtual SessionTicketAppData::Status GetSessionTicketAppData(
+      const SessionTicketAppData& app_data,
+      SessionTicketAppData::Flag flag) {
+    // TODO(@jasnell): Different QUIC application may wish to set some
+    // application data in the session ticket (e.g. http/3 would set
+    // server settings in the application data). For now, doing nothing
+    // as I'm just adding the basic mechanism.
+    return flag == SessionTicketAppData::Flag::STATUS_RENEW ?
+      SessionTicketAppData::Status::TICKET_USE_RENEW :
+      SessionTicketAppData::Status::TICKET_USE;
+  }
   virtual void StreamHeaders(
       int64_t stream_id,
       int kind,
@@ -1028,6 +1045,12 @@ class QuicSession : public AsyncWrap,
       ConnectionIDStrategy strategy);
   inline void set_preferred_address_strategy(
       PreferredAddressStrategy strategy);
+
+  inline void SetSessionTicketAppData(
+      const SessionTicketAppData& app_data);
+  inline SessionTicketAppData::Status GetSessionTicketAppData(
+      const SessionTicketAppData& app_data,
+      SessionTicketAppData::Flag flag);
 
   inline void SelectPreferredAddress(
       const QuicPreferredAddress& preferred_address);

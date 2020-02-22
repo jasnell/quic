@@ -11,6 +11,8 @@
 #include <ngtcp2/ngtcp2_crypto.h>
 #include <openssl/ssl.h>
 
+#include <vector>
+
 namespace node {
 
 namespace quic {
@@ -130,6 +132,29 @@ v8::Local<v8::Value> GetALPNProtocol(const QuicSession& session);
 
 ngtcp2_crypto_level from_ossl_level(OSSL_ENCRYPTION_LEVEL ossl_level);
 const char* crypto_level_name(ngtcp2_crypto_level level);
+
+class SessionTicketAppData {
+ public:
+  enum class Status {
+    TICKET_USE,
+    TICKET_USE_RENEW,
+    TICKET_IGNORE,
+    TICKET_IGNORE_RENEW
+  };
+
+  enum class Flag {
+    STATUS_NONE,
+    STATUS_RENEW
+  };
+
+  explicit SessionTicketAppData(SSL_SESSION* session) : session_(session) {}
+  bool Set(const uint8_t* data, size_t len) const;
+  bool Get(uint8_t** data, size_t* len) const;
+
+ private:
+  mutable bool set_ = false;
+  SSL_SESSION* session_;
+};
 
 }  // namespace quic
 }  // namespace node

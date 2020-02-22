@@ -2205,7 +2205,6 @@ void QuicSession::SendPendingData() {
 int QuicSession::set_session(SSL_SESSION* session) {
   CHECK(!is_server());
   CHECK(!is_flag_set(QUICSESSION_FLAG_DESTROYED));
-
   int size = i2d_SSL_SESSION(session, nullptr);
   if (size > SecureContext::kMaxSessionSize)
     return 0;

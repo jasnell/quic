@@ -379,6 +379,17 @@ bool QuicSession::allow_early_data() const {
   return true;
 }
 
+void QuicSession::SetSessionTicketAppData(
+    const SessionTicketAppData& app_data) {
+  application_->SetSessionTicketAppData(app_data);
+}
+
+SessionTicketAppData::Status QuicSession::GetSessionTicketAppData(
+    const SessionTicketAppData& app_data,
+    SessionTicketAppData::Flag flag) {
+  return application_->GetSessionTicketAppData(app_data, flag);
+}
+
 bool QuicSession::is_gracefully_closing() const {
   return is_flag_set(QUICSESSION_FLAG_GRACEFUL_CLOSING);
 }
