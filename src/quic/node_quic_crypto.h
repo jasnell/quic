@@ -133,6 +133,14 @@ v8::Local<v8::Value> GetALPNProtocol(const QuicSession& session);
 ngtcp2_crypto_level from_ossl_level(OSSL_ENCRYPTION_LEVEL ossl_level);
 const char* crypto_level_name(ngtcp2_crypto_level level);
 
+// SessionTicketAppData is a utility class that is used only during
+// the generation or access of TLS stateless sesson tickets. It
+// exists solely to provide a easier way for QuicApplication instances
+// to set relevant metadata in the session ticket when it is created,
+// and the exract and subsequently verify that data when a ticket is
+// received and is being validated. The app data is completely opaque
+// to anything other than the server-side of the QuicApplication that
+// sets it.
 class SessionTicketAppData {
  public:
   enum class Status {
