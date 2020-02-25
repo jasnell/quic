@@ -1064,16 +1064,23 @@ class QuicSession : public AsyncWrap,
   // complete.
   class SendSessionScope {
    public:
-    explicit SendSessionScope(QuicSession* session) : session_(session) {
+    explicit SendSessionScope(
+        QuicSession* session,
+        bool wait_for_handshake = false)
+        : session_(session),
+          wait_for_handshake_(wait_for_handshake) {
       CHECK(session_);
     }
 
     ~SendSessionScope() {
-      if (!Ngtcp2CallbackScope::InNgtcp2CallbackScope(session_.get()))
+      if (!Ngtcp2CallbackScope::InNgtcp2CallbackScope(session_.get()) &&
+          (!wait_for_handshake_ ||
+           session_->crypto_context()->is_handshake_started()))
         session_->SendPendingData();
     }
 
    private:
+    bool wait_for_handshake_ = false;
     BaseObjectPtr<QuicSession> session_;
   };
 
