@@ -66,11 +66,14 @@ void SetConfig(Environment* env, int idx, uint64_t* val) {
 // the NODE_DEBUG_NATIVE=NGTCP2_DEBUG category.
 void Ngtcp2DebugLog(void* user_data, const char* fmt, ...) {
   QuicSession* session = static_cast<QuicSession*>(user_data);
+  if (!UNLIKELY(session->env()->debug_enabled(DebugCategory::NGTCP2_DEBUG)))
+    return;
   va_list ap;
   va_start(ap, fmt);
   std::string format(fmt, strlen(fmt) + 1);
   format[strlen(fmt)] = '\n';
-  Debug(session->env(), DebugCategory::NGTCP2_DEBUG, format, ap);
+  // TODO(@jasnell): Debug() currently is not working with va_list here.
+  vfprintf(stderr, format.c_str(), ap);
   va_end(ap);
 }
 
