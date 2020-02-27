@@ -156,11 +156,11 @@ class SessionTicketAppData {
   };
 
   explicit SessionTicketAppData(SSL_SESSION* session) : session_(session) {}
-  bool Set(const uint8_t* data, size_t len) const;
+  bool Set(const uint8_t* data, size_t len);
   bool Get(uint8_t** data, size_t* len) const;
 
  private:
-  mutable bool set_ = false;
+  bool set_ = false;
   SSL_SESSION* session_;
 };
 

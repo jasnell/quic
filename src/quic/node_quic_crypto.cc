@@ -35,7 +35,7 @@ using v8::Value;
 
 namespace quic {
 
-bool SessionTicketAppData::Set(const uint8_t* data, size_t len) const {
+bool SessionTicketAppData::Set(const uint8_t* data, size_t len) {
   if (set_)
     return false;
   set_ = true;
@@ -804,7 +804,8 @@ void InitializeSecureContext(
     crypto::SecureContext* sc,
     bool early_data,
     ngtcp2_crypto_side side) {
-  // TODO(@jasnell): Should this be a static value?
+  // TODO(@jasnell): Using a static value for this at the moment but
+  // we need to determine if a non-static or per-session value is better.
   constexpr static unsigned char session_id_ctx[] = "node.js quic server";
   switch (side) {
     case NGTCP2_CRYPTO_SIDE_SERVER:

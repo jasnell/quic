@@ -31,7 +31,7 @@ const countdown = new Countdown(2, () => {
 server.listen();
 server.on('session', common.mustCall((session) => {
   session.on('secure', common.mustCall(() => {
-    assert(session.earlyData);
+    assert(session.usingEarlyData);
   }));
 
   session.on('stream', common.mustCall((stream) => {
@@ -94,7 +94,7 @@ server.on('ready', common.mustCall(() => {
       // early data was sent. Once we actually start making
       // use of early data on the client side, this should be
       // true when the early data was accepted.
-      assert(!req.earlyData);
+      assert(!req.usingEarlyData);
     }));
   }
 }));

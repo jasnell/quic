@@ -842,18 +842,6 @@ added: REPLACEME
 
 A `BigInt` representing the length of time the `QuicSession` was active.
 
-#### quicsession.earlyData
-<!-- YAML
-added: REPLACEME
--->
-
-* Type: {boolean}
-
-On server `QuicSession` instances, set to `true` on completion of the TLS
-handshake if early data is enabled. On client `QuicSession` instances,
-set to true on handshake completion if early data is enabled *and* was
-accepted by the server.
-
 #### quicsession.getCertificate()
 <!-- YAML
 added: REPLACEME
@@ -1130,6 +1118,18 @@ Initiates QuicSession key update.
 
 An error will be thrown if called before `quicsession.handshakeConfirmed`
 is equal to `true`.
+
+#### quicsession.usingEarlyData
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {boolean}
+
+On server `QuicSession` instances, set to `true` on completion of the TLS
+handshake if early data is enabled. On client `QuicSession` instances,
+set to true on handshake completion if early data is enabled *and* was
+accepted by the server.
 
 ### Class: QuicClientSession extends QuicSession
 <!-- YAML
