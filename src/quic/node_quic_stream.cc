@@ -259,7 +259,7 @@ BaseObjectPtr<QuicStream> QuicStream::New(
     int64_t push_id) {
   Local<Object> obj;
   if (!session->env()
-              ->quicserverstream_constructor_template()
+              ->quicserverstream_instance_template()
               ->NewInstance(session->env()->context()).ToLocal(&obj)) {
     return {};
   }
@@ -500,7 +500,7 @@ void QuicStream::Initialize(
   env->SetProtoMethod(stream, "submitHeaders", QuicStreamSubmitHeaders);
   env->SetProtoMethod(stream, "submitTrailers", QuicStreamSubmitTrailers);
   env->SetProtoMethod(stream, "submitPush", QuicStreamSubmitPush);
-  env->set_quicserverstream_constructor_template(streamt);
+  env->set_quicserverstream_instance_template(streamt);
   target->Set(env->context(),
               class_name,
               stream->GetFunction(env->context()).ToLocalChecked()).FromJust();

@@ -329,7 +329,7 @@ void QuicSocket::OnError(QuicEndpoint* endpoint, ssize_t error) {
 ReqWrap<uv_udp_send_t>* QuicSocket::OnCreateSendWrap(size_t msg_size) {
   HandleScope handle_scope(env()->isolate());
   Local<Object> obj;
-  if (!env()->quicsocketsendwrap_constructor_template()
+  if (!env()->quicsocketsendwrap_instance_template()
           ->NewInstance(env()->context()).ToLocal(&obj)) return nullptr;
   return last_created_send_wrap_ = new SendWrap(env(), obj, msg_size);
 }
@@ -1167,7 +1167,7 @@ void QuicSocket::Initialize(
   // TODO(addaleax): None of these templates actually are constructor templates.
   Local<ObjectTemplate> sendwrap_template = ObjectTemplate::New(isolate);
   sendwrap_template->SetInternalFieldCount(1);
-  env->set_quicsocketsendwrap_constructor_template(sendwrap_template);
+  env->set_quicsocketsendwrap_instance_template(sendwrap_template);
 }
 
 }  // namespace quic

@@ -2622,7 +2622,7 @@ BaseObjectPtr<QuicSession> QuicSession::CreateServer(
     QlogMode qlog) {
   Local<Object> obj;
   if (!socket->env()
-             ->quicserversession_constructor_template()
+             ->quicserversession_instance_template()
              ->NewInstance(socket->env()->context()).ToLocal(&obj)) {
     return {};
   }
@@ -2770,7 +2770,7 @@ BaseObjectPtr<QuicSession> QuicSession::CreateClient(
     QlogMode qlog) {
   Local<Object> obj;
   if (!socket->env()
-             ->quicclientsession_constructor_template()
+             ->quicclientsession_instance_template()
              ->NewInstance(socket->env()->context()).ToLocal(&obj)) {
     return {};
   }
@@ -3730,7 +3730,7 @@ void QuicSession::Initialize(
     sessiont->SetInternalFieldCount(1);
     sessiont->Set(env->owner_symbol(), Null(env->isolate()));
     AddMethods(env, session);
-    env->set_quicserversession_constructor_template(sessiont);
+    env->set_quicserversession_instance_template(sessiont);
   }
 
   {
@@ -3750,7 +3750,7 @@ void QuicSession::Initialize(
                         "setSocket",
                         QuicSessionSetSocket);
     env->SetProtoMethod(session, "startHandshake", QuicSessionStartHandshake);
-    env->set_quicclientsession_constructor_template(sessiont);
+    env->set_quicclientsession_instance_template(sessiont);
 
     env->SetMethod(target, "createClientSession", NewQuicClientSession);
     env->SetMethod(target, "silentCloseSession", QuicSessionSilentClose);

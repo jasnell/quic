@@ -408,10 +408,10 @@ constexpr size_t kFsStatsBufferLength =
 
 #if HAVE_OPENSSL && defined(NODE_EXPERIMENTAL_QUIC)
 # define QUIC_ENVIRONMENT_STRONG_PERSISTENT_TEMPLATES(V)                       \
-  V(quicclientsession_constructor_template, v8::ObjectTemplate)                \
-  V(quicserversession_constructor_template, v8::ObjectTemplate)                \
-  V(quicserverstream_constructor_template, v8::ObjectTemplate)                 \
-  V(quicsocketsendwrap_constructor_template, v8::ObjectTemplate)
+  V(quicclientsession_instance_template, v8::ObjectTemplate)                   \
+  V(quicserversession_instance_template, v8::ObjectTemplate)                   \
+  V(quicserverstream_instance_template, v8::ObjectTemplate)                    \
+  V(quicsocketsendwrap_instance_template, v8::ObjectTemplate)
 #else
 # define QUIC_ENVIRONMENT_STRONG_PERSISTENT_TEMPLATES(V)
 #endif
