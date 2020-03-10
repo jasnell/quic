@@ -21,6 +21,7 @@
     'node_shared_libuv%': 'false',
     'node_shared_nghttp2%': 'false',
     'node_shared_ngtcp2%': 'false',
+    'node_shared_nghttp3%': 'false',
     'node_use_openssl%': 'true',
     'node_shared_openssl%': 'false',
     'node_v8_options%': '',
@@ -896,7 +897,10 @@
           'node_target_type=="executable"', {
           'defines': [ 'NODE_ENABLE_LARGE_CODE_PAGES=1' ],
         }],
-        [ 'node_use_openssl=="true" and experimental_quic==1', {
+        [
+          # We can only use QUIC if using our modified, static linked
+          # OpenSSL because we have patched in the QUIC support.
+          'node_use_openssl=="true" and node_shared_openssl=="false" and experimental_quic==1', {
           'defines': ['NODE_EXPERIMENTAL_QUIC=1'],
           'sources': [
             'src/quic/node_quic_buffer.h',

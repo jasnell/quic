@@ -282,8 +282,29 @@ shared_optgroup.add_option('--shared-ngtcp2-libname',
 
 shared_optgroup.add_option('--shared-ngtcp2-libpath',
     action='store',
-    dest='shared_ngctp2_libpath',
+    dest='shared_ngtcp2_libpath',
     help='a directory to search for the shared ngtcp2 DLLs')
+
+shared_optgroup.add_option('--shared-nghttp3',
+    action='store_true',
+    dest='shared_nghttp3',
+    help='link to a shared nghttp3 DLL instead of static linking')
+
+shared_optgroup.add_option('--shared-nghttp3-includes',
+    action='store',
+    dest='shared_nghttp3_includes',
+    help='directory containing nghttp3 header files')
+
+shared_optgroup.add_option('--shared-nghttp3-libname',
+    action='store',
+    dest='shared_nghttp3_libname',
+    default='nghttp3',
+    help='alternative lib name to link to [default: %default]')
+
+shared_optgroup.add_option('--shared-nghttp3-libpath',
+    action='store',
+    dest='shared_nghttp3_libpath',
+    help='a directory to search for the shared nghttp3 DLLs')
 
 shared_optgroup.add_option('--shared-openssl',
     action='store_true',
